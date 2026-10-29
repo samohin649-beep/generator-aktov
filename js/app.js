@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '1.1.2';
+  var APP_VERSION = '1.1.3';
   var CFG = window.APP_CONFIG || { objects: [] };
   var ST = {
     obj: null, token: '', role: '', me: null, email: '',
@@ -119,7 +119,7 @@
     var list = CFG.objects || [];
     var want = new URLSearchParams(location.search).get('o') || store.get('pf:obj');
     var o = list.filter(function (x) { return x.id === want; })[0] || (list.length === 1 ? list[0] : null);
-    if (o) { ST.obj = o; store.set('pf:obj', o.id); document.title = 'Передача фронта — ' + o.name; }
+    if (o) { ST.obj = o; store.set('pf:obj', o.id); document.title = 'Генератор актов — ' + o.name; }
   }
   function renderPick() {
     var list = CFG.objects || [];
@@ -129,13 +129,13 @@
       brand('Выберите объект'),
       h('h1', { class: 'h1' }, 'Передача ', h('em', null, 'фронта работ')),
       list.length ? h('div', { class: 'list' }, list.map(function (o) {
-        return h('button', { class: 'card', type: 'button', onclick: function () { ST.obj = o; store.set('pf:obj', o.id); document.title = 'Передача фронта — ' + o.name; loadSession(); go(''); } },
+        return h('button', { class: 'card', type: 'button', onclick: function () { ST.obj = o; store.set('pf:obj', o.id); document.title = 'Генератор актов — ' + o.name; loadSession(); go(''); } },
           h('span', { class: 'c-title' }, o.name), o.address ? h('span', { class: 'c-sub' }, o.address) : null);
       })) : h('div', { class: 'msg err' }, 'Не настроен ни один объект (config.js).')));
   }
   function brand(sub) {
     return h('div', { class: 'brand' }, h('div', { class: 'logo', html: ICON.home }),
-      h('div', null, h('div', { class: 'b-sub' }, sub || (ST.obj ? ST.obj.name : '')), h('div', { class: 'b-main' }, 'Передача фронта работ')));
+      h('div', null, h('div', { class: 'b-sub' }, sub || (ST.obj ? ST.obj.name : '')), h('div', { class: 'b-main' }, 'Генератор актов')));
   }
 
   /* ---------- вход ---------- */
