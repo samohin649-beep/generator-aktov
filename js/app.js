@@ -1,13 +1,13 @@
-/* Передача фронта — приложение (подрядчик и застройщик). Версия 1.0, 28.10.2026.
+/* Передача фронта — приложение (подрядчик и застройщик). Версия 1.1, 29.10.2026.
  * Данные и акты — в Google Таблице объекта; связь — через API веб-приложения Apps Script (config.js). */
 (function () {
   'use strict';
 
-  var APP_VERSION = '1.0';
+  var APP_VERSION = '1.1';
   var CFG = window.APP_CONFIG || { objects: [] };
   var ST = {
     obj: null, token: '', role: '', me: null, email: '',
-    c: null, dev: null, tab: 'out', dtab: 'wait', q: '', sel: '', editId: '',
+    c: null, dev: null, tab: 'out', dtab: 'wait', scope: '', q: '', sel: '', editId: '', cfg: null,
     loading: false, lastLoad: 0, pollN: 0, pollT: 0, kickT: 0, msg: null
   };
 
@@ -101,6 +101,7 @@
   function route() {
     var hs = location.hash.replace(/^#/, '');
     if (!ST.obj) return renderPick();
+    if (hs === 'join') return renderJoin();
     if (!ST.token) return renderLogin();
     if (ST.role === 'dev') {
       var m = hs.match(/^d\/(.+)$/);
@@ -192,7 +193,9 @@
         h('p', { class: 'lead' }, 'Введите рабочий e-mail, который вы сообщили застройщику. Пришлём одноразовый код — пароль не нужен.')),
       step2 ? f2 : f1, msgBox,
       (CFG.objects || []).length > 1 ? h('button', { class: 'linkbtn', type: 'button', style: 'align-self:flex-start', onclick: function () { store.set('pf:obj', null); ST.obj = null; go(''); } }, 'Другой объект') : null,
-      h('div', { class: 'foot' }, 'Нет доступа? Попросите застройщика внести ваш e-mail. Версия ' + APP_VERSION + '.')));
+      h('div', { class: 'foot' },
+        h('a', { class: 'btn ghost block', href: '#join', style: 'margin-bottom:14px' }, 'Заявка на подключение организации'),
+        'Нет доступа? Подайте заявку на подключение — застройщик рассмотрит её и пришлёт ответ на e-mail. Версия ' + APP_VERSION + '.')));
     (step2 ? code : email).focus();
     if (step2) paint();
   }
@@ -250,6 +253,7 @@
       h('div', { class: 'c-title' }, it.w1 + ' → ' + it.w2),
       h('div', { class: 'c-sub' }, place + (mine ? ' · кому: ' + it.to : ' · от: ' + it.from)),
       it.note ? h('div', { class: 'c-sub' }, 'Комментарий: ' + it.note) : null,
+      mine && it.apprName ? h('div', { class: 'c-sub' }, 'Согласующий: ' + it.apprName + (it.dir ? ' · ' + it.dir : '')) : null,
       mine && (it.ddec || it.dnote) ? h('div', { class: 'c-note' }, 'Застройщик: ' + [it.ddec, it.dnote].filter(Boolean).join(' — ')) : null,
       !it.viaForm && mine ? h('div', { class: 'c-sub' }, 'Подана через файл-реестр — правка и отзыв там.') : null,
       h('div', { class: 'c-btns' },
@@ -321,11 +325,51 @@
       note: h('textarea', { id: 'f_note', class: 'inp', rows: '2' }, v('note'))
     };
     var fld = function (k, label) { return h('div', { class: 'field' }, h('label', { for: 'f_' + k }, label), f[k]); };
+    // согласующий от застройщика: направление → представители, которые ведут корпус и направление
+    var devs = l.devs || [], dirs = l.dirs || [];
+    var useAppr = devs.length > 0;
+    var choice = { dir: it ? it.dir : (store.get('pf:dir') || ''), appr: it ? it.appr : (store.get('pf:appr') || '') };
+    if (dirs.indexOf(choice.dir) < 0) choice.dir = '';
+    var apprSel = h('select', { id: 'f_appr', class: 'inp' });
+    var apprHint = h('div', { class: 'hint', 'aria-live': 'polite' });
+    var dirBox = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Направление' });
+    function covers(d, k, dir) {
+      return (!d.korp.length || d.korp.some(function (x) { return key(x) === key(k); })) && (!d.dirs.length || !dir || d.dirs.indexOf(dir) >= 0);
+    }
+    function paintDirs() {
+      dirBox.innerHTML = '';
+      dirs.forEach(function (x) {
+        add(dirBox, h('button', { type: 'button', role: 'radio', 'aria-checked': String(choice.dir === x), class: choice.dir === x ? 'on' : '',
+          onclick: function () { choice.dir = x; paintDirs(); paintAppr(); } }, x));
+      });
+    }
+    function paintAppr() {
+      var k = f.korp.value;
+      var list = k && choice.dir ? devs.filter(function (d) { return covers(d, k, choice.dir); }) : [];
+      var spec = list.filter(function (d) { return d.korp.length || d.dirs.length; });          // кто ведёт именно этот корпус
+      list = spec.concat(list.filter(function (d) { return spec.indexOf(d) < 0; }));
+      if (choice.auto || !list.some(function (d) { return d.id === choice.appr; })) {          // выбор вручную сохраняется
+        choice.appr = spec.length === 1 ? spec[0].id : list.length === 1 ? list[0].id : '';
+        choice.auto = !!choice.appr;
+      }
+      apprSel.innerHTML = '';
+      add(apprSel, h('option', { value: '' }, list.length > 1 ? '— выберите —' : '—'));
+      list.forEach(function (d) { add(apprSel, h('option', { value: d.id, selected: d.id === choice.appr ? true : null }, d.name + (d.pos ? ' — ' + d.pos : ''))); });
+      apprSel.disabled = !k || !choice.dir || !list.length;
+      apprHint.textContent = !k ? 'Сначала выберите корпус.' : !choice.dir ? 'Выберите направление.' :
+        !list.length ? 'Для ' + k + ' (' + choice.dir + ') согласующий не назначен — обратитесь к застройщику.' :
+        spec.length === 1 && choice.appr === spec[0].id ? k + ' (' + choice.dir + ') ведёт ' + spec[0].name + ' — выбран автоматически.' : '';
+    }
+    apprSel.addEventListener('change', function () { choice.appr = apprSel.value; choice.auto = false; });
+    f.korp.addEventListener('change', paintAppr);
+    if (useAppr) { paintDirs(); paintAppr(); }
     var msgBox = h('div', { 'aria-live': 'polite' });
     var bSave = h('button', { class: 'btn block', type: 'submit' }, 'Отправить');
     var form = h('form', { class: 'form', novalidate: true, onsubmit: function (ev) {
       ev.preventDefault();
       var data = {}; Object.keys(f).forEach(function (k) { data[k] = f[k].value; });
+      data.dir = useAppr ? choice.dir : ''; data.appr = useAppr ? apprSel.value : '';
+      if (useAppr) { store.set('pf:dir', data.dir); store.set('pf:appr', data.appr); }
       bSave.disabled = true; bSave.innerHTML = ''; add(bSave, [h('span', { class: 'spin' }), ' Отправляем…']);
       msgBox.innerHTML = '';
       var wasEdit = !!ST.editId;
@@ -345,6 +389,8 @@
       it ? h('div', { class: 'msg good' }, 'Изменение заявки ' + it.id + ': после отправки проект акта пересоздастся, согласование начнётся заново.') : null,
       it && (it.ddec || it.dnote) ? h('div', { class: 'msg ok' }, 'Застройщик: ' + [it.ddec, it.dnote].filter(Boolean).join(' — ')) : null,
       h('div', { class: 'grid2' }, fld('date', 'Дата *'), fld('korp', 'Корпус *')),
+      useAppr ? h('div', { class: 'field' }, h('span', { class: 'lbl-t' }, 'Направление *'), dirBox) : null,
+      useAppr ? h('div', { class: 'field' }, h('label', { for: 'f_appr' }, 'Согласующий от застройщика *'), apprSel, apprHint) : null,
       fld('to', 'Кому передаю фронт *'),
       fld('w1', 'Мои выполненные работы *'),
       fld('w2', 'Работы принимающего *'),
@@ -382,15 +428,24 @@
     if (ST.pollN++ > 15) return;                        // не дольше ~5 минут
     ST.pollT = setTimeout(function () { if (document.visibilityState === 'visible') loadDev(true); else schedulePoll(); }, 20000);
   }
+  function scope() {
+    if (!ST.scope) ST.scope = store.get('pf:scope') || 'mine';
+    return ST.scope;
+  }
   function devList() {
     var d = ST.dev; if (!d) return [];
-    var arr = ST.dtab === 'fix' ? d.fix : ST.dtab === 'acts' ? d.acts : d.wait;
     var q = key(ST.q);
-    return q ? arr.filter(function (v) { return key([v.id, v.from, v.to, v.w1, v.w2, v.korp, v.mark, v.axes].join(' ')).indexOf(q) >= 0; }) : arr;
+    if (ST.dtab === 'joins') {
+      var j = d.joins || [];
+      return q ? j.filter(function (v) { return key([v.id, v.org, v.inn, v.name, v.email, v.works].join(' ')).indexOf(q) >= 0; }) : j;
+    }
+    var arr = ST.dtab === 'fix' ? d.fix : ST.dtab === 'acts' ? d.acts : d.wait;
+    if (scope() === 'mine') arr = arr.filter(function (v) { return v.mine; });
+    return q ? arr.filter(function (v) { return key([v.id, v.from, v.to, v.w1, v.w2, v.korp, v.mark, v.axes, v.apprName].join(' ')).indexOf(q) >= 0; }) : arr;
   }
   function findDev(id) {
     var d = ST.dev; if (!d) return null;
-    return d.wait.concat(d.fix, d.acts).filter(function (v) { return v.id === id; })[0] || null;
+    return d.wait.concat(d.fix, d.acts, d.joins || []).filter(function (v) { return v.id === id; })[0] || null;
   }
 
   function renderDev() {
@@ -401,6 +456,13 @@
     var list = devList();
     var wide = window.matchMedia('(min-width: 1000px)').matches;
     if (!sel && wide && list.length) sel = list[0];
+    var c = scope() === 'mine' && d.counts.mine ? d.counts.mine : d.counts;
+    if (ST.dtab === 'joins' && !(d.joins || []).length) ST.dtab = 'wait';
+    var scopeSeg = h('div', { class: 'seg', role: 'tablist', 'aria-label': 'Чьи заявки' },
+      [['mine', 'Мои · ' + (d.counts.mine ? d.counts.mine.wait : d.counts.wait)], ['all', 'Все · ' + d.counts.wait]].map(function (p) {
+        return h('button', { type: 'button', role: 'tab', class: scope() === p[0] ? 'on' : '', 'aria-selected': String(scope() === p[0]),
+          onclick: function () { ST.scope = p[0]; store.set('pf:scope', p[0]); ST.sel = ''; go('d'); } }, p[1]);
+      }));
     var tile = function (k, n, label) {
       return h('button', { type: 'button', class: 'tile' + (ST.dtab === k ? ' on' : ''), 'aria-pressed': String(ST.dtab === k), onclick: function () { ST.dtab = k; ST.sel = ''; go('d'); } },
         h('b', null, String(n)), h('span', null, label));
@@ -408,32 +470,48 @@
     var search = h('input', { type: 'search', 'aria-label': 'Поиск', placeholder: 'Организация, работы, № заявки', value: ST.q });
     search.addEventListener('input', function () { ST.q = search.value; var pos = search.selectionStart; renderDev(); var s2 = document.querySelector('.search input'); if (s2) { s2.focus(); s2.setSelectionRange(pos, pos); } });
 
+    var isJ = ST.dtab === 'joins';
     var cards = h('div', { class: 'list only-narrow', style: 'padding-bottom:32px' }, list.length ? list.map(function (v) {
+      if (isJ) return h('a', { class: 'card hot', href: '#d/' + encodeURIComponent(v.id), style: 'color:var(--tx)' },
+        h('div', { class: 'c-head' }, h('span', { class: 'c-id' }, v.id + ' · ' + v.sent), h('span', { class: 'chip wait' }, 'Подключение')),
+        h('div', { class: 'c-title' }, v.org),
+        h('div', { class: 'c-sub' }, [v.name, v.works, v.korp, v.dir].filter(Boolean).join(' · ')));
       return h('a', { class: 'card' + (v.forming ? '' : ST.dtab === 'wait' ? ' hot' : ''), href: '#d/' + encodeURIComponent(v.id), style: 'color:var(--tx)' },
         h('div', { class: 'c-head' }, h('span', { class: 'c-id' }, v.id + ' · ' + v.sent), statusChip(v)),
         h('div', { class: 'c-title' }, short(v.from) + ' → ' + short(v.to)),
-        h('div', { class: 'c-sub' }, v.w1 + ' → ' + v.w2 + ' · ' + place(v)));
+        h('div', { class: 'c-sub' }, v.w1 + ' → ' + v.w2 + ' · ' + place(v)),
+        !v.mine || scope() === 'all' ? h('div', { class: 'c-sub' }, 'Согласующий: ' + (v.apprName || 'не назначен') + (v.dir ? ' · ' + v.dir : '')) : null);
     }) : h('div', { class: 'empty' }, emptyText()));
-    var table = h('div', { class: 'dtable-box only-wide' }, list.length ? h('table', { class: 'dtable' },
-      h('thead', null, h('tr', null, ['№ заявки', 'Передаёт → принимает', 'Работы', 'Где', ST.dtab === 'acts' ? 'Акт' : 'Подана'].map(function (t) { return h('th', { scope: 'col' }, t); }))),
+    var table = isJ ? h('div', { class: 'dtable-box only-wide' }, list.length ? h('table', { class: 'dtable' },
+      h('thead', null, h('tr', null, ['№', 'Организация', 'Контакт', 'Работы', 'Подана'].map(function (t) { return h('th', { scope: 'col' }, t); }))),
+      h('tbody', null, list.map(function (v) {
+        return h('tr', { class: sel && sel.id === v.id ? 'sel' : '', tabindex: '0', onclick: function () { go('d/' + encodeURIComponent(v.id)); },
+          onkeydown: function (ev) { if (ev.key === 'Enter') go('d/' + encodeURIComponent(v.id)); } },
+          h('td', { class: 'mono' }, v.id), h('td', { class: 'who' }, v.org), h('td', null, v.name + (v.pos ? ', ' + v.pos : '')),
+          h('td', null, v.works), h('td', null, v.sent));
+      }))) : h('div', { class: 'empty' }, emptyText()))
+      : h('div', { class: 'dtable-box only-wide' }, list.length ? h('table', { class: 'dtable' },
+      h('thead', null, h('tr', null, ['№ заявки', 'Передаёт → принимает', 'Работы', 'Где', 'Согласующий', ST.dtab === 'acts' ? 'Акт' : 'Подана'].map(function (t) { return h('th', { scope: 'col' }, t); }))),
       h('tbody', null, list.map(function (v) {
         return h('tr', { class: sel && sel.id === v.id ? 'sel' : '', tabindex: '0', onclick: function () { go('d/' + encodeURIComponent(v.id)); },
           onkeydown: function (ev) { if (ev.key === 'Enter') go('d/' + encodeURIComponent(v.id)); } },
           h('td', { class: 'mono' }, v.id), h('td', { class: 'who' }, short(v.from) + ' → ' + short(v.to)),
-          h('td', null, v.w1 + ' → ' + v.w2), h('td', null, place(v)), h('td', null, ST.dtab === 'acts' ? '№ ' + v.act : (v.forming ? 'формируется' : v.sent)));
+          h('td', null, v.w1 + ' → ' + v.w2), h('td', null, place(v)), h('td', { class: v.mine ? 'who' : '' }, (v.apprName || '—') + (v.dir ? ' · ' + v.dir : '')), h('td', null, ST.dtab === 'acts' ? '№ ' + v.act : (v.forming ? 'формируется' : v.sent)));
       }))) : h('div', { class: 'empty' }, emptyText()));
 
     add(r, h('div', { class: 'wrap wide' },
-      topBar(ST.dtab === 'fix' ? 'На доработке' : ST.dtab === 'acts' ? 'Сформированные акты' : 'На согласование', (d.name ? d.name + ' · ' : '') + 'Застройщик',
+      topBar(isJ ? 'Подключение организаций' : ST.dtab === 'fix' ? 'На доработке' : ST.dtab === 'acts' ? 'Сформированные акты' : 'На согласование', (d.name ? d.name + ' · ' : '') + 'Застройщик',
         null),
       h('div', { class: 'dev-grid' + (ST.sel ? ' has-sel' : '') },
         h('section', { class: 'dev-list' },
-          h('div', { class: 'tiles' }, tile('wait', d.counts.wait, 'Ждут решения'), tile('fix', d.counts.fix, 'На доработке'), tile('acts', d.counts.acts, 'Актов')),
+          scopeSeg,
+          h('div', { class: 'tiles' + ((d.joins || []).length ? ' t4' : '') }, tile('wait', c.wait, 'Ждут решения'), tile('fix', c.fix, 'На доработке'), tile('acts', c.acts, 'Актов'),
+            (d.joins || []).length ? tile('joins', d.joins.length, 'Новые орг.') : null),
           h('label', { class: 'search' }, h('span', { html: ICON.search, style: 'display:inline-flex' }), search),
           cards, table),
-        h('aside', { class: 'dev-detail', 'aria-label': 'Заявка' }, sel ? detail(sel) : h('div', { class: 'empty' }, 'Выберите заявку')))));
+        h('aside', { class: 'dev-detail', 'aria-label': 'Заявка' }, sel ? (isJ || /^П/.test(sel.id) && sel.org ? joinDetail(sel) : detail(sel)) : h('div', { class: 'empty' }, 'Выберите заявку')))));
   }
-  function emptyText() { return ST.q ? 'Ничего не найдено.' : ST.dtab === 'wait' ? 'Все заявки рассмотрены.' : ST.dtab === 'fix' ? 'На доработке ничего нет.' : 'Актов пока нет.'; }
+  function emptyText() { return ST.q ? 'Ничего не найдено.' : ST.dtab === 'joins' ? 'Новых заявок нет.' : scope() === 'mine' && ST.dtab !== 'acts' ? 'В «Мои» пусто. Заявки коллег — во вкладке «Все».' : ST.dtab === 'wait' ? 'Все заявки рассмотрены.' : ST.dtab === 'fix' ? 'На доработке ничего нет.' : 'Актов пока нет.'; }
   function short(s) { return String(s || '').replace(/^(ООО|АО|ПАО|ЗАО|ИП)\s+/, '').replace(/[«»"]/g, ''); }
   function place(v) { return [v.korp, [v.p1, v.mark].filter(Boolean).join(' '), [v.p2, v.axes].filter(Boolean).join(' ')].filter(Boolean).join(' · '); }
   function statusChip(v) {
@@ -447,6 +525,7 @@
   function detail(v) {
     var facts = [['Передаёт', v.from], ['Принимает', v.to], ['Выполнено', v.w1], ['Далее', v.w2], ['Где', place(v)], ['Дата', v.date]];
     if (v.note) facts.push(['Комментарий', v.note]);
+    facts.push(['Согласующий', (v.apprName || 'не назначен') + (v.dir ? ' · ' + v.dir : '') + (v.mine ? ' (вы)' : '')]);
     if (v.ddec) facts.push(['Решение', v.ddec + (v.dnote ? ' — ' + v.dnote : '') + (v.by ? ' (' + v.by + (v.dtime ? ', ' + v.dtime : '') + ')' : '')]);
     var box = h('div', { class: 'dev-detail-in', style: 'display:flex;flex-direction:column;gap:14px' },
       h('div', { class: 'back-row' }, h('a', { class: 'btn ghost sm', href: '#d', style: 'width:max-content' }, icon('back'), 'К списку')),
@@ -471,7 +550,8 @@
           toast('Решение уже принято: ' + x.ddec + (x.by ? ' — ' + x.by : '') + '.', true);
         } else {
           v.ddec = dec; v.dnote = comment.value; v.by = ST.me && ST.me.name; v.forming = dec === 'Согласовать';
-          toast(dec === 'Согласовать' ? 'Согласовано. Акт и PDF сформируются за 1–3 минуты.' : dec === 'На доработку' ? 'Отправлено на доработку.' : 'Заявка отклонена.');
+          toast((dec === 'Согласовать' ? 'Согласовано' : dec === 'На доработку' ? 'Отправлено на доработку' : 'Заявка отклонена') +
+            (x.instead ? ' за ' + x.instead : '') + '.' + (dec === 'Согласовать' ? ' Акт и PDF сформируются за 1–3 минуты.' : ''));
           kick();
         }
         var next = devList().filter(function (u) { return u.id !== v.id && !u.forming; })[0];
@@ -490,8 +570,97 @@
       h('div', { class: 'field' }, h('label', { for: 'dc' }, 'Комментарий подрядчику'), comment),
       h('div', { class: 'decide' }, bOk, h('div', { class: 'grid2' }, bFix, bNo)),
       msgBox,
-      h('div', { style: 'font-size:12px;color:var(--mut)' }, 'Решение запишется с вашим именем и временем. Если коллега уже ответил, вы увидите его решение.')]);
+      !v.mine && v.apprName ? h('div', { class: 'msg ok' }, 'Заявка назначена: ' + v.apprName + '. Ваше решение запишется как замена — «за ' + v.apprName + '».') : null,
+      h('div', { style: 'font-size:12px;color:var(--mut)' }, 'Решение запишется с вашим именем и временем; в акте представителем застройщика будет тот, кто согласовал.')]);
     return box;
+  }
+
+  /* ---------- подключение организации ---------- */
+  function joinDetail(v) {
+    var facts = [['Организация', v.org], ['ИНН', v.inn], ['Контакт', v.name + (v.pos ? ', ' + v.pos : '')], ['E-mail', v.email], ['Телефон', v.phone],
+      ['Работы', v.works], ['Корпуса', v.korp], ['Направление', v.dir], ['Подана', v.sent]];
+    var comment = h('textarea', { id: 'jc', class: 'inp', rows: '3', placeholder: 'Обязателен для отказа — получит организация' });
+    var msgBox = h('div', { 'aria-live': 'polite' });
+    var bs = [];
+    function decide(dec) {
+      if (dec === 'Отклонить' && !comment.value.trim()) { msgBox.innerHTML = ''; add(msgBox, h('div', { class: 'msg err' }, 'Напишите причину отказа.')); comment.focus(); return; }
+      bs.forEach(function (b) { b.disabled = true; });
+      msgBox.innerHTML = ''; add(msgBox, h('div', { class: 'msg ok' }, h('span', { class: 'spin' }), ' Записываем…'));
+      api('devJoinDecide', ST.token, v.id, dec, comment.value).then(function (x) {
+        toast(x.already ? 'Уже решено: ' + x.status + (x.by ? ' — ' + x.by : '') + '.' :
+          dec === 'Одобрить' ? 'Подключена: ' + x.org + ' (код ' + x.code + ').' + (x.mailed ? ' Письмо со ссылкой отправлено.' : ' Письмо не отправлено — сообщите вход сами.') :
+          'Заявка отклонена, организации отправлено письмо.', !!x.already);
+        ST.sel = ''; go('d'); loadDev(true);
+      }).catch(function (e) { bs.forEach(function (b) { b.disabled = false; }); msgBox.innerHTML = ''; add(msgBox, h('div', { class: 'msg err' }, e.message)); });
+    }
+    var bOk = h('button', { class: 'btn block', type: 'button', onclick: function () { decide('Одобрить'); } }, icon('check'), 'Подключить');
+    var bNo = h('button', { class: 'btn mute sm', type: 'button', style: 'height:52px', onclick: function () { decide('Отклонить'); } }, 'Отклонить');
+    bs = [bOk, bNo];
+    return h('div', { class: 'dev-detail-in', style: 'display:flex;flex-direction:column;gap:14px' },
+      h('div', { class: 'back-row' }, h('a', { class: 'btn ghost sm', href: '#d', style: 'width:max-content' }, icon('back'), 'К списку')),
+      h('div', { class: 'c-head', style: 'display:flex;justify-content:space-between;align-items:center' }, h('span', { class: 'mono', style: 'color:var(--acc-soft-tx)' }, v.id), h('span', { class: 'chip wait' }, 'Подключение')),
+      h('dl', { class: 'facts' }, facts.filter(function (p) { return p[1]; }).map(function (p) { return [h('dt', null, p[0]), h('dd', null, p[1])]; })),
+      h('div', { class: 'field' }, h('label', { for: 'jc' }, 'Комментарий организации'), comment),
+      h('div', { class: 'decide' }, bOk, bNo), msgBox,
+      h('div', { style: 'font-size:12px;color:var(--mut)' }, '«Подключить» вносит организацию и e-mail в «Реестры» и отправляет письмо со ссылкой на приложение. Решение окончательное.'));
+  }
+
+  function renderJoin() {
+    var r = root(); r.innerHTML = '';
+    if (!ST.cfg) {
+      add(r, h('div', { class: 'wrap' }, h('div', { class: 'empty' }, h('span', { class: 'spin' }), ' Загрузка…')));
+      api('config').then(function (c) { ST.cfg = c; renderJoin(); }).catch(function () { ST.cfg = { korp: [], dirs: ['Общестрой', 'ВИС'] }; renderJoin(); });
+      return;
+    }
+    var cfg = ST.cfg, pick = { korp: [], dir: '' };
+    var inp = function (id, attrs) { return h('input', Object.assign({ id: 'j_' + id, class: 'inp' }, attrs || {})); };
+    var f = {
+      org: inp('org', { placeholder: 'ООО «Название»', autocomplete: 'organization' }), inn: inp('inn', { inputmode: 'numeric', maxlength: '12' }),
+      name: inp('name', { autocomplete: 'name' }), pos: inp('pos', { autocomplete: 'organization-title' }),
+      email: inp('email', { type: 'email', inputmode: 'email', autocomplete: 'email' }), phone: inp('phone', { type: 'tel', autocomplete: 'tel' }),
+      works: h('textarea', { id: 'j_works', class: 'inp', rows: '2', placeholder: 'Например: монтаж систем ОВ, отделка МОП' })
+    };
+    var trap = h('input', { name: 'website', tabindex: '-1', autocomplete: 'off', class: 'trap', 'aria-hidden': 'true' });
+    var fld = function (k, label) { return h('div', { class: 'field' }, h('label', { for: 'j_' + k }, label), f[k]); };
+    var korpBox = h('div', { class: 'tags' }), dirBox = h('div', { class: 'seg' });
+    function paint() {
+      korpBox.innerHTML = ''; dirBox.innerHTML = '';
+      (cfg.korp || []).forEach(function (k) {
+        var on = pick.korp.indexOf(k) >= 0;
+        add(korpBox, h('button', { type: 'button', class: 'tag' + (on ? ' on' : ''), 'aria-pressed': String(on),
+          onclick: function () { if (on) pick.korp.splice(pick.korp.indexOf(k), 1); else pick.korp.push(k); paint(); } }, k));
+      });
+      (cfg.dirs || []).concat(['Оба']).forEach(function (x) {
+        add(dirBox, h('button', { type: 'button', class: pick.dir === x ? 'on' : '', 'aria-pressed': String(pick.dir === x), onclick: function () { pick.dir = x; paint(); } }, x));
+      });
+    }
+    paint();
+    var msgBox = h('div', { 'aria-live': 'polite' });
+    var bSend = h('button', { class: 'btn block', type: 'submit' }, 'Отправить заявку');
+    var form = h('form', { class: 'form', novalidate: true, onsubmit: function (ev) {
+      ev.preventDefault();
+      var data = {}; Object.keys(f).forEach(function (k) { data[k] = f[k].value; });
+      data.korp = pick.korp.join(', '); data.dir = pick.dir === 'Оба' ? '' : pick.dir; data.website = trap.value;
+      bSend.disabled = true; bSend.textContent = 'Отправляем…'; msgBox.innerHTML = '';
+      api('joinRequest', data).then(function (x) {
+        r.innerHTML = '';
+        add(r, h('main', { class: 'login' }, h('div', { class: 'ring', 'aria-hidden': 'true' }), brand('Заявка отправлена'),
+          h('h1', { class: 'h1', style: 'margin-top:32px' }, 'Заявка ', h('em', null, x.id || 'принята')),
+          h('p', { class: 'lead' }, 'Застройщик рассмотрит заявку. Ответ придёт на ' + data.email.trim() + ' — со ссылкой на приложение, если доступ открыт.'),
+          h('a', { class: 'btn block', href: '#', style: 'margin-top:20px' }, 'Ко входу')));
+      }).catch(function (e) { bSend.disabled = false; bSend.textContent = 'Отправить заявку'; add(msgBox, h('div', { class: 'msg err' }, e.message)); });
+    } },
+      fld('org', 'Организация *'), h('div', { class: 'grid2' }, fld('inn', 'ИНН'), fld('phone', 'Телефон *')),
+      fld('name', 'Контактное лицо (ФИО) *'), fld('pos', 'Должность'), fld('email', 'E-mail для входа *'), fld('works', 'Виды работ на объекте *'),
+      (cfg.korp || []).length ? h('div', { class: 'field' }, h('span', { class: 'lbl-t' }, 'Корпуса'), korpBox) : null,
+      h('div', { class: 'field' }, h('span', { class: 'lbl-t' }, 'Направление'), dirBox),
+      trap, msgBox, h('div', { class: 'fab' }, bSend));
+    add(r, h('div', { class: 'wrap' },
+      h('div', { class: 'top' }, h('a', { class: 'icon-btn', href: '#', 'aria-label': 'Ко входу', html: ICON.back }),
+        h('div', { class: 'grow' }, h('div', { class: 't-sub' }, ST.obj.name), h('div', { class: 't-main' }, 'Подключение организации'))),
+      h('p', { class: 'lead', style: 'margin:4px 0 8px' }, 'Заполните заявку — застройщик проверит организацию и откроет доступ по e-mail.'),
+      form));
+    f.org.focus();
   }
 
   /* ---------- запуск ---------- */

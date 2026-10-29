@@ -163,3 +163,12 @@ table.dtable { width: 100%; min-width: 720px; border-collapse: collapse; font-si
 @keyframes sp { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
 .btn span > svg:not([width]) { width: 18px; height: 18px; }
+/* 1.1: согласующий, подключение */
+.hint { font-size: 12px; color: var(--mut); min-height: 16px; }
+.lbl-t { font-size: 12px; font-weight: 600; color: var(--tx2); }
+select.inp:disabled { opacity: .55; }
+.tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.tag { height: 40px; min-width: 56px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line2); background: var(--s1); color: var(--tx2); font-family: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+.tag.on { background: var(--acc); border-color: var(--acc); color: var(--acc-on); }
+.trap { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+.tiles.t4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
