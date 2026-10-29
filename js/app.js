@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '1.1.1';
+  var APP_VERSION = '1.1.2';
   var CFG = window.APP_CONFIG || { objects: [] };
   var ST = {
     obj: null, token: '', role: '', me: null, email: '',
@@ -252,6 +252,7 @@
       h('div', { class: 'c-head' }, h('span', { class: 'c-id' }, it.id + (it.date ? ' · ' + it.date : '')), h('span', { class: 'chip ' + kind }, it.status || '—')),
       h('div', { class: 'c-title' }, it.w1 + ' → ' + it.w2),
       h('div', { class: 'c-sub' }, place + (mine ? ' · кому: ' + it.to : ' · от: ' + it.from)),
+      it.app ? h('div', { class: 'c-sub' }, 'Приложение: ' + it.app) : null,
       it.note ? h('div', { class: 'c-sub' }, 'Комментарий: ' + it.note) : null,
       mine && it.apprName ? h('div', { class: 'c-sub' }, 'Согласующий: ' + it.apprName + (it.dir ? ' · ' + it.dir : '')) : null,
       mine && (it.ddec || it.dnote) ? h('div', { class: 'c-note' }, 'Застройщик: ' + [it.ddec, it.dnote].filter(Boolean).join(' — ')) : null,
@@ -322,6 +323,7 @@
       mark: h('input', { id: 'f_mark', class: 'inp', value: v('mark') }),
       p2: sel('f_p2', l.p2, v('p2'), true),
       axes: h('input', { id: 'f_axes', class: 'inp mono', value: v('axes') }),
+      app: h('input', { id: 'f_app', class: 'inp', value: v('app'), placeholder: 'напр.: Схема устройства гильз проходок в монолитных стенах К5 на 2 тех.этаже в осях 4-5/Б-7' }),
       note: h('textarea', { id: 'f_note', class: 'inp', rows: '2' }, v('note'))
     };
     var fld = function (k, label) { return h('div', { class: 'field' }, h('label', { for: 'f_' + k }, label), f[k]); };
@@ -396,6 +398,7 @@
       fld('w2', 'Работы принимающего *'),
       h('div', { class: 'grid-pre' }, fld('p1', 'Предлог'), fld('mark', 'Отметка')),
       h('div', { class: 'grid-pre' }, fld('p2', 'Предлог'), fld('axes', 'Оси')),
+      fld('app', 'Приложение'),
       fld('note', 'Комментарий для застройщика'),
       h('div', { class: 'note-row' }, icon('info'), 'Новую организацию или работу впишите целиком — она добавится в справочник. После отправки сразу появится проект акта «не подписывать».'),
       msgBox,
@@ -525,6 +528,7 @@
 
   function detail(v) {
     var facts = [['Передаёт', v.from], ['Принимает', v.to], ['Выполнено', v.w1], ['Далее', v.w2], ['Где', place(v)], ['Дата', v.date]];
+    if (v.app) facts.push(['Приложение', v.app]);
     if (v.note) facts.push(['Комментарий', v.note]);
     facts.push(['Согласующий', (v.apprName || 'не назначен') + (v.dir ? ' · ' + v.dir : '') + (v.mine ? ' (вы)' : '')]);
     if (v.ddec) facts.push(['Решение', v.ddec + (v.dnote ? ' — ' + v.dnote : '') + (v.by ? ' (' + v.by + (v.dtime ? ', ' + v.dtime : '') + ')' : '')]);

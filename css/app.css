@@ -180,3 +180,6 @@ select.inp:disabled { opacity: .55; }
 .contacts:empty { display: none; }
 .add-contact { align-self: flex-start; }
 .add-contact svg { width: 16px; height: 16px; }
+
+/* 1.1.2: «Приложение» — пример мелким шрифтом */
+#f_app::placeholder { font-size: 12px; opacity: .65; }
