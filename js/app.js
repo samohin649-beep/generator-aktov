@@ -429,6 +429,7 @@
     ST.pollT = setTimeout(function () { if (document.visibilityState === 'visible') loadDev(true); else schedulePoll(); }, 20000);
   }
   function scope() {
+    if (ST.dev && !ST.dev.counts.mine) return 'all';          // сервер без согласующих (Api 1.0) — показываем всё
     if (!ST.scope) ST.scope = store.get('pf:scope') || 'mine';
     return ST.scope;
   }
@@ -458,7 +459,7 @@
     if (!sel && wide && list.length) sel = list[0];
     var c = scope() === 'mine' && d.counts.mine ? d.counts.mine : d.counts;
     if (ST.dtab === 'joins' && !(d.joins || []).length) ST.dtab = 'wait';
-    var scopeSeg = h('div', { class: 'seg', role: 'tablist', 'aria-label': 'Чьи заявки' },
+    var scopeSeg = !d.counts.mine ? null : h('div', { class: 'seg', role: 'tablist', 'aria-label': 'Чьи заявки' },
       [['mine', 'Мои · ' + (d.counts.mine ? d.counts.mine.wait : d.counts.wait)], ['all', 'Все · ' + d.counts.wait]].map(function (p) {
         return h('button', { type: 'button', role: 'tab', class: scope() === p[0] ? 'on' : '', 'aria-selected': String(scope() === p[0]),
           onclick: function () { ST.scope = p[0]; store.set('pf:scope', p[0]); ST.sel = ''; go('d'); } }, p[1]);
@@ -613,6 +614,12 @@
       return;
     }
     var cfg = ST.cfg, pick = { korp: [], dir: '' };
+    if (/^1\.0/.test(cfg.api || '')) {                         // сервер ещё без подключения (Api 1.0)
+      add(r, h('main', { class: 'login' }, brand('Подключение организации'),
+        h('div', { class: 'msg ok', style: 'margin-top:32px' }, 'Приём заявок на подключение скоро откроется. Пока обратитесь к застройщику напрямую.'),
+        h('a', { class: 'btn block', href: '#', style: 'margin-top:16px' }, 'Ко входу')));
+      return;
+    }
     var inp = function (id, attrs) { return h('input', Object.assign({ id: 'j_' + id, class: 'inp' }, attrs || {})); };
     var f = {
       org: inp('org', { placeholder: 'ООО «Название»', autocomplete: 'organization' }), inn: inp('inn', { inputmode: 'numeric', maxlength: '12' }),
