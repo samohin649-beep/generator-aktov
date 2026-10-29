@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '1.1';
+  var APP_VERSION = '1.1.1';
   var CFG = window.APP_CONFIG || { objects: [] };
   var ST = {
     obj: null, token: '', role: '', me: null, email: '',
@@ -476,7 +476,7 @@
       if (isJ) return h('a', { class: 'card hot', href: '#d/' + encodeURIComponent(v.id), style: 'color:var(--tx)' },
         h('div', { class: 'c-head' }, h('span', { class: 'c-id' }, v.id + ' · ' + v.sent), h('span', { class: 'chip wait' }, 'Подключение')),
         h('div', { class: 'c-title' }, v.org),
-        h('div', { class: 'c-sub' }, [v.name, v.works, v.korp, v.dir].filter(Boolean).join(' · ')));
+        h('div', { class: 'c-sub' }, [v.contract ? 'Договор ' + v.contract : '', v.name + ((v.contacts || []).length ? ' +' + v.contacts.length : ''), v.korp, v.dir].filter(Boolean).join(' · ')));
       return h('a', { class: 'card' + (v.forming ? '' : ST.dtab === 'wait' ? ' hot' : ''), href: '#d/' + encodeURIComponent(v.id), style: 'color:var(--tx)' },
         h('div', { class: 'c-head' }, h('span', { class: 'c-id' }, v.id + ' · ' + v.sent), statusChip(v)),
         h('div', { class: 'c-title' }, short(v.from) + ' → ' + short(v.to)),
@@ -488,7 +488,7 @@
       h('tbody', null, list.map(function (v) {
         return h('tr', { class: sel && sel.id === v.id ? 'sel' : '', tabindex: '0', onclick: function () { go('d/' + encodeURIComponent(v.id)); },
           onkeydown: function (ev) { if (ev.key === 'Enter') go('d/' + encodeURIComponent(v.id)); } },
-          h('td', { class: 'mono' }, v.id), h('td', { class: 'who' }, v.org), h('td', null, v.name + (v.pos ? ', ' + v.pos : '')),
+          h('td', { class: 'mono' }, v.id), h('td', { class: 'who' }, v.org, v.contract ? h('div', { class: 'c-sub' }, 'Договор ' + v.contract) : null), h('td', null, v.name + (v.pos ? ', ' + v.pos : '') + ((v.contacts || []).length ? ' +' + v.contacts.length : '')),
           h('td', null, v.works), h('td', null, v.sent));
       }))) : h('div', { class: 'empty' }, emptyText()))
       : h('div', { class: 'dtable-box only-wide' }, list.length ? h('table', { class: 'dtable' },
@@ -578,8 +578,12 @@
 
   /* ---------- подключение организации ---------- */
   function joinDetail(v) {
-    var facts = [['Организация', v.org], ['ИНН', v.inn], ['Контакт', v.name + (v.pos ? ', ' + v.pos : '')], ['E-mail', v.email], ['Телефон', v.phone],
-      ['Работы', v.works], ['Корпуса', v.korp], ['Направление', v.dir], ['Подана', v.sent]];
+    var facts = [['Организация', v.org], ['ИНН', v.inn], ['Договор', v.contract], ['Предмет', v.subject],
+      ['Контакт', v.name + (v.pos ? ', ' + v.pos : '')], ['E-mail', v.email], ['Телефон', v.phone]];
+    (v.contacts || []).forEach(function (c, i) {
+      facts.push(['Контакт ' + (i + 2), [c.name, c.pos].filter(Boolean).join(', ') + (c.phone || c.email ? ' · ' + [c.phone, c.email].filter(Boolean).join(' · ') : '')]);
+    });
+    facts.push(['Работы', v.works], ['Корпуса', v.korp], ['Направление', v.dir], ['Подана', v.sent]);
     var comment = h('textarea', { id: 'jc', class: 'inp', rows: '3', placeholder: 'Обязателен для отказа — получит организация' });
     var msgBox = h('div', { 'aria-live': 'polite' });
     var bs = [];
@@ -603,7 +607,7 @@
       h('dl', { class: 'facts' }, facts.filter(function (p) { return p[1]; }).map(function (p) { return [h('dt', null, p[0]), h('dd', null, p[1])]; })),
       h('div', { class: 'field' }, h('label', { for: 'jc' }, 'Комментарий организации'), comment),
       h('div', { class: 'decide' }, bOk, bNo), msgBox,
-      h('div', { style: 'font-size:12px;color:var(--mut)' }, '«Подключить» вносит организацию и e-mail в «Реестры» и отправляет письмо со ссылкой на приложение. Решение окончательное.'));
+      h('div', { style: 'font-size:12px;color:var(--mut)' }, '«Подключить» вносит организацию и e-mail всех контактных лиц в «Реестры» и отправляет им письмо со ссылкой на приложение. Решение окончательное.'));
   }
 
   function renderJoin() {
@@ -623,10 +627,35 @@
     var inp = function (id, attrs) { return h('input', Object.assign({ id: 'j_' + id, class: 'inp' }, attrs || {})); };
     var f = {
       org: inp('org', { placeholder: 'ООО «Название»', autocomplete: 'organization' }), inn: inp('inn', { inputmode: 'numeric', maxlength: '12' }),
+      contract: inp('contract', { placeholder: '№ 12/26-ОВ от 01.03.2026' }),
+      subject: h('textarea', { id: 'j_subject', class: 'inp', rows: '2', placeholder: 'Например: выполнение работ по монтажу систем отопления и вентиляции' }),
       name: inp('name', { autocomplete: 'name' }), pos: inp('pos', { autocomplete: 'organization-title' }),
       email: inp('email', { type: 'email', inputmode: 'email', autocomplete: 'email' }), phone: inp('phone', { type: 'tel', autocomplete: 'tel' }),
       works: h('textarea', { id: 'j_works', class: 'inp', rows: '2', placeholder: 'Например: монтаж систем ОВ, отделка МОП' })
     };
+    // контактные лица 2 и 3 — по кнопке «+», чтобы форма не росла
+    var extra = [];
+    var extraBox = h('div', { class: 'contacts' });
+    var bAdd = h('button', { type: 'button', class: 'btn ghost sm add-contact', onclick: function () { addContact(); } }, icon('plus'), 'Контактное лицо');
+    function addContact() {
+      if (extra.length >= 2) return;
+      var n = extra.length + 2, c = {
+        name: h('input', { class: 'inp', 'aria-label': 'ФИО, лицо ' + n, placeholder: 'ФИО *', autocomplete: 'off' }),
+        pos: h('input', { class: 'inp', 'aria-label': 'Должность, лицо ' + n, placeholder: 'Должность', autocomplete: 'off' }),
+        phone: h('input', { class: 'inp', type: 'tel', 'aria-label': 'Телефон, лицо ' + n, placeholder: 'Телефон', autocomplete: 'off' }),
+        email: h('input', { class: 'inp', type: 'email', inputmode: 'email', 'aria-label': 'E-mail, лицо ' + n, placeholder: 'E-mail (тоже получит вход)', autocomplete: 'off' })
+      };
+      c.box = h('fieldset', { class: 'contact' },
+        h('legend', null, 'Контактное лицо ' + n,
+          h('button', { type: 'button', class: 'x', 'aria-label': 'Убрать контактное лицо ' + n, onclick: function () {
+            extra.splice(extra.indexOf(c), 1); c.box.remove(); renum(); } }, '×')),
+        c.name, h('div', { class: 'grid2' }, c.pos, c.phone), c.email);
+      extra.push(c); extraBox.appendChild(c.box); renum(); c.name.focus();
+    }
+    function renum() {
+      extra.forEach(function (c, i) { c.box.querySelector('legend').firstChild.textContent = 'Контактное лицо ' + (i + 2); });
+      bAdd.style.display = extra.length >= 2 ? 'none' : '';
+    }
     var trap = h('input', { name: 'website', tabindex: '-1', autocomplete: 'off', class: 'trap', 'aria-hidden': 'true' });
     var fld = function (k, label) { return h('div', { class: 'field' }, h('label', { for: 'j_' + k }, label), f[k]); };
     var korpBox = h('div', { class: 'tags' }), dirBox = h('div', { class: 'seg' });
@@ -647,6 +676,7 @@
     var form = h('form', { class: 'form', novalidate: true, onsubmit: function (ev) {
       ev.preventDefault();
       var data = {}; Object.keys(f).forEach(function (k) { data[k] = f[k].value; });
+      data.contacts = extra.map(function (c) { return { name: c.name.value, pos: c.pos.value, phone: c.phone.value, email: c.email.value }; });
       data.korp = pick.korp.join(', '); data.dir = pick.dir === 'Оба' ? '' : pick.dir; data.website = trap.value;
       bSend.disabled = true; bSend.textContent = 'Отправляем…'; msgBox.innerHTML = '';
       api('joinRequest', data).then(function (x) {
@@ -657,8 +687,12 @@
           h('a', { class: 'btn block', href: '#', style: 'margin-top:20px' }, 'Ко входу')));
       }).catch(function (e) { bSend.disabled = false; bSend.textContent = 'Отправить заявку'; add(msgBox, h('div', { class: 'msg err' }, e.message)); });
     } },
-      fld('org', 'Организация *'), h('div', { class: 'grid2' }, fld('inn', 'ИНН'), fld('phone', 'Телефон *')),
-      fld('name', 'Контактное лицо (ФИО) *'), fld('pos', 'Должность'), fld('email', 'E-mail для входа *'), fld('works', 'Виды работ на объекте *'),
+      fld('org', 'Организация *'), fld('inn', 'ИНН'),
+      h('div', { class: 'grid2' }, fld('contract', 'Номер договора *'), h('div')), fld('subject', 'Предмет договора *'),
+      h('fieldset', { class: 'contact' }, h('legend', null, 'Контактное лицо 1'),
+        fld('name', 'ФИО *'), h('div', { class: 'grid2' }, fld('pos', 'Должность'), fld('phone', 'Телефон *')), fld('email', 'E-mail для входа *')),
+      extraBox, bAdd,
+      fld('works', 'Виды работ на объекте *'),
       (cfg.korp || []).length ? h('div', { class: 'field' }, h('span', { class: 'lbl-t' }, 'Корпуса'), korpBox) : null,
       h('div', { class: 'field' }, h('span', { class: 'lbl-t' }, 'Направление'), dirBox),
       trap, msgBox, h('div', { class: 'fab' }, bSend));
