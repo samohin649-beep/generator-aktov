@@ -503,7 +503,7 @@
         h('a', { class: 'icon-btn', href: '#', 'aria-label': 'Назад к заявкам', html: ICON.back }),
         h('div', { class: 'grow' }, h('div', { class: 't-sub' }, 'Акт приёма-передачи фронта работ · ' + ST.c.org), h('div', { class: 't-main' }, it ? 'Заявка ' + it.id : 'Новая заявка'))),
       form));
-    f.w1.focus();
+    if (it) f.w1.focus();
   }
 
   /* ---------- площадка (акт приёмки-передачи мест производства работ) ---------- */
