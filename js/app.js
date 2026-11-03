@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '1.3.0';
+  var APP_VERSION = '1.3.1';
   var CFG = window.APP_CONFIG || { objects: [] };
   var ST = {
     obj: null, token: '', role: '', me: null, email: '',
@@ -698,6 +698,198 @@
       if (!quiet && e.code !== 'SESSION') toast(e.message, true);
     });
   }
+  /* склонение — копия серверной логики */
+  var REG_DECL_EXC = {
+    'работы': ['работы', 'работ'],
+    'сети': ['сети', 'сетей'],
+    'узел': ['узел', 'узла'],
+    'слой': ['слой', 'слоя']
+  };
+
+  function regDecline_(phrase, kase) {
+    var s = String(phrase || '');
+    if (!s || (kase !== 'вин' && kase !== 'род')) return s;
+    var words = s.split(' ');
+    for (var i = 0; i < words.length; i++) {
+      var m = words[i].match(/^([«"(]*)([А-Яа-яЁё-]+)(.*)$/);
+      if (!m) break;
+      var w = m[2], lw = w.toLowerCase();
+      var exc = REG_DECL_EXC[lw];
+      var isAdj = !exc && i < words.length - 1 && regIsAdj_(lw);
+      var nw = exc ? exc[kase === 'вин' ? 0 : 1] : (isAdj ? regDeclAdj_(lw, kase) : regDeclNoun_(lw, kase));
+      if (w !== lw) nw = (w === w.toUpperCase() && w.length > 1) ? nw.toUpperCase() : nw.charAt(0).toUpperCase() + nw.slice(1);
+      words[i] = m[1] + nw + m[3];
+      if (!isAdj) break;
+    }
+    return words.join(' ');
+  }
+
+  function regIsAdj_(w) {
+    if (/(ый|ая|яя|ое|ее|ые)$/.test(w)) return true;
+    if (/(ой|ий)$/.test(w)) return w.length > 4;
+    if (/ие$/.test(w)) return /([гкхжшчщ]|нн)ие$/.test(w);
+    return false;
+  }
+
+  function regDeclAdj_(w, k) {
+    if (k === 'вин') return w.replace(/ая$/, 'ую').replace(/яя$/, 'юю');
+    if (/(ый|ой|ое)$/.test(w)) return w.slice(0, -2) + 'ого';
+    if (/[гкх]ий$/.test(w)) return w.slice(0, -2) + 'ого';
+    if (/(ий|ее)$/.test(w)) return w.slice(0, -2) + 'его';
+    if (/[чщ]ая$/.test(w)) return w.slice(0, -2) + 'ей';
+    if (/ая$/.test(w)) return w.slice(0, -2) + 'ой';
+    if (/яя$/.test(w)) return w.slice(0, -2) + 'ей';
+    if (/ые$/.test(w)) return w.slice(0, -2) + 'ых';
+    if (/ие$/.test(w)) return w.slice(0, -2) + 'их';
+    return w;
+  }
+
+  function regDeclNoun_(w, k) {
+    if (k === 'вин') {
+      if (/я$/.test(w)) return w.slice(0, -1) + 'ю';
+      if (/а$/.test(w)) return w.slice(0, -1) + 'у';
+      return w;
+    }
+    if (/[иь]е$/.test(w)) return w.slice(0, -1) + 'я';
+    if (/[иь]я$/.test(w)) return w.slice(0, -1) + 'и';
+    if (/я$/.test(w)) return w.slice(0, -1) + 'и';
+    if (/[гкхжшчщ]а$/.test(w)) return w.slice(0, -1) + 'и';
+    if (/а$/.test(w)) return w.slice(0, -1) + 'ы';
+    if (/о$/.test(w)) return w.slice(0, -1) + 'а';
+    if (/е$/.test(w)) return w.slice(0, -1) + 'я';
+    if (/й$/.test(w)) return w.slice(0, -1) + 'я';
+    if (/[бвгджзклмнпрстфхцчшщ]$/.test(w)) return w + 'а';
+    return w;
+  }
+
+  /* ---------- склонение места: «предлог + отметка / оси / помещение» ---------- */
+
+  /**
+   * Падеж, которого требует предлог. Составные предлоги на существительное («в уровне», «в пределах», «в районе»,
+   * «со стороны») требуют родительного. Неизвестный предлог — 'им' (текст не меняется).
+   */
+  function drPrepCase_(prep) {
+    var p = String(prep || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!p || /\//.test(p)) return 'им';                       // «в/о», «м/о» — сокращения, текст после них не склоняем
+    if (/^(в|во|на|при|о|об)$/.test(p)) return 'пр';
+    if (/^(между|под|над|за|перед|рядом с|вместе с|с|со)$/.test(p)) return 'тв';
+    if (/^(от|до|из|у|около|возле|вдоль|вблизи|выше|ниже|после|кроме|для|напротив|внутри|вокруг)$/.test(p)) return 'род';
+    if (/^(в|во|на|со|с|по) [а-яё]+$/.test(p) && !/^по /.test(p)) return 'род';   // в уровне, в пределах, в районе, со стороны
+    return 'им';
+  }
+
+  /** Словарь частых слов места: [пр., род., тв.]; ключ — им. п. Можно дополнять. */
+  var DR_PLACE_WORDS = {
+    'этаж': ['этаже', 'этажа', 'этажом'], 'этажи': ['этажах', 'этажей', 'этажами'],
+    'ось': ['оси', 'оси', 'осью'], 'оси': ['осях', 'осей', 'осями'],
+    'отметка': ['отметке', 'отметки', 'отметкой'],
+    'помещение': ['помещении', 'помещения', 'помещением'], 'помещения': ['помещениях', 'помещений', 'помещениями'],
+    'уровень': ['уровне', 'уровня', 'уровнем'], 'кровля': ['кровле', 'кровли', 'кровлей'],
+    'секция': ['секции', 'секции', 'секцией'], 'секции': ['секциях', 'секций', 'секциями'],
+    'подвал': ['подвале', 'подвала', 'подвалом'], 'техподполье': ['техподполье', 'техподполья', 'техподпольем'],
+    'паркинг': ['паркинге', 'паркинга', 'паркингом'], 'автостоянка': ['автостоянке', 'автостоянки', 'автостоянкой'],
+    'квартира': ['квартире', 'квартиры', 'квартирой'], 'квартиры': ['квартирах', 'квартир', 'квартирами'],
+    'шахта': ['шахте', 'шахты', 'шахтой'], 'санузел': ['санузле', 'санузла', 'санузлом'],
+    'венткамера': ['венткамере', 'венткамеры', 'венткамерой'], 'коридор': ['коридоре', 'коридора', 'коридором'],
+    'тамбур': ['тамбуре', 'тамбура', 'тамбуром'], 'холл': ['холле', 'холла', 'холлом'],
+    'клетка': ['клетке', 'клетки', 'клеткой'], 'зона': ['зоне', 'зоны', 'зоной'], 'пролёт': ['пролёте', 'пролёта', 'пролётом'],
+    'пролет': ['пролете', 'пролета', 'пролетом'], 'корпус': ['корпусе', 'корпуса', 'корпусом'],
+    'стена': ['стене', 'стены', 'стеной'], 'перекрытие': ['перекрытии', 'перекрытия', 'перекрытием'],
+    'техэтаж': ['техэтаже', 'техэтажа', 'техэтажом'], 'чердак': ['чердаке', 'чердака', 'чердаком']
+  };
+  var DR_CASE_I = { 'пр': 0, 'род': 1, 'тв': 2 };
+
+  /** Существительное в им. п. → нужный падеж (словарь, затем осторожные правила). Не узнали — без изменений. */
+  function drNoun_(w, k) {
+    var f = DR_PLACE_WORDS[w];
+    if (f) return f[DR_CASE_I[k]];
+    if (drKnownForm_(w)) return w;                                 // уже склонено («5 этажа», «в помещении»)
+    if (/ние$/.test(w)) return w.slice(0, -1) + ({ 'пр': 'и', 'род': 'я', 'тв': 'ем' })[k];
+    if (/ция$/.test(w)) return w.slice(0, -1) + ({ 'пр': 'и', 'род': 'и', 'тв': 'ей' })[k];
+    if (/[кгх]а$/.test(w)) return w.slice(0, -1) + ({ 'пр': 'е', 'род': 'и', 'тв': 'ой' })[k];
+    if (/[жшчщц]а$/.test(w)) return w.slice(0, -1) + ({ 'пр': 'е', 'род': 'и', 'тв': 'ей' })[k];
+    if (/[бвдзлмнпрстф]а$/.test(w)) return w.slice(0, -1) + ({ 'пр': 'е', 'род': 'ы', 'тв': 'ой' })[k];
+    if (/[бвгдзклмнпрстфх]$/.test(w) && w.length > 3) return w + ({ 'пр': 'е', 'род': 'а', 'тв': 'ом' })[k];
+    return w;
+  }
+
+  /** Прилагательное в им. п. → нужный падеж (по роду окончания). */
+  function drAdj_(w, k) {
+    var i = DR_CASE_I[k];
+    if (/ая$/.test(w)) return w.slice(0, -2) + (/[жшчщ]ая$/.test(w) ? ['ей', 'ей', 'ей'] : ['ой', 'ой', 'ой'])[i];
+    if (/яя$/.test(w)) return w.slice(0, -2) + 'ей';
+    if (/(ый|ое)$/.test(w)) return w.slice(0, -2) + ['ом', 'ого', 'ым'][i];
+    if (/ой$/.test(w)) return w.slice(0, -2) + ['ом', 'ого', 'ым'][i];
+    if (/[гкх]ий$/.test(w)) return w.slice(0, -2) + ['ом', 'ого', 'им'][i];
+    if (/ий$/.test(w)) return w.slice(0, -2) + ['ем', 'его', 'им'][i];
+    if (/(ые|ие)$/.test(w)) return w.slice(0, -2) + (/[гкхжшчщ]ие$/.test(w) ? ['их', 'их', 'ими'] : ['ых', 'ых', 'ыми'])[i];
+    return w;
+  }
+
+  /**
+   * Согласует текст места с предлогом: «на» + «5 этаж» → «5 этаже», «в уровне» + «2-23 этаж» → «2-23 этажей»,
+   * «в» + «помещение 101» → «помещении 101», «между» + «оси 1-2» → «осями 1-2», «в» + «лестничная клетка» → «лестничной клетке».
+   * Числа, отметки (+3.300), оси (4-2/4-Г), сокращения («отм.», «эт.») не трогаются. Уже склонённое слово остаётся как есть.
+   */
+  function drPlaceDecl_(prep, text) {
+    var s = String(text || '').trim();
+    var k = drPrepCase_(prep);
+    if (!s || k === 'им') return s;
+    var words = s.split(/\s+/);
+    var range = false, done = false;
+    for (var i = 0; i < words.length && i < 4 && !done; i++) {
+      var m = words[i].match(/^([«"(]*)([А-Яа-яЁё]+)([»")]*[,;]?)$/);
+      if (!m) {                                                   // число / диапазон / ось — запоминаем «множественность»
+        if (/\d/.test(words[i])) { range = /\d\s*[-–—,]\s*\d|\d[-–—]$/.test(words[i]) || range; continue; }
+        break;
+      }
+      var w = m[2], lw = w.toLowerCase();
+      if (lw.length < 3 || w === w.toUpperCase()) break;        // «ИТП», «МОП», «эт», «до»
+      if (drIsAdjPlace_(lw) && i + 1 < words.length) {           // «лестничная клетка», «лифтовой холл»
+        var nx = words[i + 1].match(/^([А-Яа-яЁё]+)(.*)$/);
+        if (nx && !drIsAdjPlace_(nx[1].toLowerCase())) {
+          words[i] = m[1] + drCaseLike_(w, drAdj_(lw, k)) + m[3];
+          var nn = nx[1].toLowerCase();
+          words[i + 1] = drCaseLike_(nx[1], drNoun_(nn, k)) + nx[2];
+          done = true; continue;
+        }
+      }
+      if (drIsAdjPlace_(lw)) { words[i] = m[1] + drCaseLike_(w, drAdj_(lw, k)) + m[3]; done = true; continue; }  // «электрощитовая»
+      var lk = lw;
+      if (range && DR_PLACE_WORDS[lw + 'и'] !== undefined) lk = lw + 'и';     // «2-23 этаж» → этажи
+      else if (range && lw === 'ось') lk = 'оси';
+      words[i] = m[1] + drCaseLike_(w, drNoun_(lk, k)) + m[3];
+      done = true;
+    }
+    return words.join(' ');
+  }
+
+  function drKnownForm_(w) {
+    return Object.keys(DR_PLACE_WORDS).some(function (key) { return key !== w && (DR_PLACE_WORDS[key] || []).indexOf(w) >= 0; });
+  }
+  function drIsAdjPlace_(w) { return !/ние$/.test(w) && /(ая|яя|ый|ой|ий|ое|ее|ые|ие)$/.test(w) && w.length > 4 && !DR_PLACE_WORDS[w]; }
+  function drCaseLike_(src, dst) {
+    if (!dst) return src;
+    return src.charAt(0) === src.charAt(0).toUpperCase() ? dst.charAt(0).toUpperCase() + dst.slice(1) : dst;
+  }
+
+  /** Предлог в середине фразы — со строчной (кроме сокращений вида «В/О»). */
+  function drPrep_(p) {
+    var s = String(p || '').trim();
+    return /\//.test(s) ? s.toLowerCase() : s.charAt(0).toLowerCase() + s.slice(1);
+  }
+  function drLowerFirst_(s) {
+    s = String(s || '');
+    return /^[А-ЯЁA-Z][А-ЯЁA-Z]/.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1);
+  }
+  /** Предпросмотр фразы акта — та же логика склонения, что на сервере (Реестры.gs / ДопРаботы.gs). */
+  function drSentence(x) {
+    var w = String(x.work || '').trim(); if (!w) return '';
+    var mk = String(x.mark || '').trim(), ax = String(x.axes || '').trim();
+    return [drLowerFirst_(regDecline_(w, 'вин')), mk ? drPrep_(x.p1) : '', drPlaceDecl_(x.p1, mk), ax ? drPrep_(x.p2) : '', drPlaceDecl_(x.p2, ax)]
+      .filter(Boolean).join(' ');
+  }
+
   function drItemLine(x, i) { return (i + 1) + '. ' + x.name + ' — ' + x.qty + ' ' + x.unit + (x.note ? ' (' + x.note + ')' : ''); }
   function drCard(it) {
     var fix = /^На доработке/.test(it.status) || it.ddec === 'Отклонить';
@@ -711,8 +903,8 @@
     var chip = it.done ? h('span', { class: 'chip act' }, 'Акт № ' + it.num) : plStatusChip(it.status);
     return h('article', { class: 'card' + (fix && it.editable ? ' hot' : '') },
       h('div', { class: 'c-head' }, h('span', { class: 'c-id' }, it.id + (it.sent ? ' · ' + it.sent : '')), chip),
-      h('div', { class: 'c-title' }, it.summary),
-      h('div', { class: 'c-sub' }, ['Договор ' + it.contract + (it.cdate ? ' от ' + it.cdate : ''), it.korp].filter(Boolean).join(' · ')),
+      h('div', { class: 'c-title' }, it.work),
+      h('div', { class: 'c-sub' }, ['Договор ' + it.contract + (it.cdate ? ' от ' + it.cdate : ''), it.korp, it.code ? 'шифр ' + it.code : ''].filter(Boolean).join(' · ')),
       h('div', { class: 'c-sub' }, it.place),
       h('div', { class: 'c-sub', style: 'white-space:pre-line' }, (it.items || []).map(drItemLine).join('\n')),
       it.apprName ? h('div', { class: 'c-sub' }, 'Согласующий: ' + it.apprName + (it.dir ? ' · ' + it.dir : '') + (it.dev2Name ? '; в комиссии также ' + it.dev2Name : '')) : null,
@@ -738,13 +930,22 @@
     var korpList = (L.korp || []).slice();
     if (it && it.korp && korpList.indexOf(it.korp) < 0) korpList.push(it.korp);
     var devs = ST.dr.devs || [];
+    function drSel(id, arr, val) {
+      arr = (arr || []).slice(); if (val && arr.indexOf(val) < 0) arr.push(val);
+      return h('select', { id: id, class: 'inp' }, h('option', { value: '' }, '—'),
+        arr.map(function (x) { return h('option', { value: x, selected: x === val ? true : null }, x); }));
+    }
     var f = {
       contract: h('input', { id: 'r_contract', class: 'inp mono', value: v('contract'), placeholder: 'ГУ-26-0000' }),
       cdate: h('input', { id: 'r_cdate', class: 'inp mono', value: v('cdate'), placeholder: 'дд.мм.гг', inputmode: 'numeric' }),
       korp: h('select', { id: 'r_korp', class: 'inp' }, h('option', { value: '' }, '—'),
         korpList.map(function (x) { return h('option', { value: x, selected: x === v('korp') ? true : null }, x); })),
-      place: h('textarea', { id: 'r_place', class: 'inp', rows: '2', placeholder: 'корпус 5, техподполье, в осях 4-2/4-3, отм. -3.300' }, v('place')),
-      summary: h('input', { id: 'r_summary', class: 'inp', value: v('summary'), placeholder: 'работы по устройству гильз и противопожарных проходок' }),
+      work: h('input', { id: 'r_work', class: 'inp', value: v('work'), placeholder: 'Обратная засыпка пазух' }),
+      p1: drSel('r_p1', L.p1, v('p1')),
+      mark: h('input', { id: 'r_mark', class: 'inp', value: v('mark'), placeholder: '2-23 этаж / отм. +3.300' }),
+      p2: drSel('r_p2', L.p2, v('p2')),
+      axes: h('input', { id: 'r_axes', class: 'inp mono', value: v('axes'), placeholder: '4-2/4-3//4-Г/4-Е или помещение 101' }),
+      code: h('input', { id: 'r_code', class: 'inp mono', value: v('code'), placeholder: 'ГУ-26-0667-ОВ2' }),
       reason: h('textarea', { id: 'r_reason', class: 'inp', rows: '4', placeholder: 'Почему работы нужны и почему их нет в проекте/договоре: изменение РД, коллизия, требование надзора…' }, v('reason')),
       basis: h('input', { id: 'r_basis', class: 'inp', value: v('basis'), placeholder: 'РД ОВ2 лист 12 рев. 3; письмо № … от …; поручение …' }),
       dev2: h('select', { id: 'r_dev2', class: 'inp' }, h('option', { value: '' }, '— не нужен —'),
@@ -756,8 +957,8 @@
     var fld = function (k, label, hint) { return h('div', { class: 'field' }, h('label', { for: 'r_' + k }, label), f[k], hint ? h('div', { class: 'hint' }, hint) : null); };
     var ab = apprBlock({ devs: devs, dirs: ST.dr.dirs || [] }, f.korp, it);
 
-    // ведомость: до 20 позиций
-    var MAX = 20, rows = [];
+    // ведомость: без ограничения числа позиций (в акте таблица растёт вниз)
+    var MAX = 300, rows = [];
     var itemsBox = h('div', { style: 'display:flex;flex-direction:column;gap:12px' });
     var bAdd = h('button', { class: 'btn ghost sm', type: 'button', onclick: function () { addItem({}); } }, icon('plus'), 'Позиция');
     function addItem(p) {
@@ -777,7 +978,7 @@
         h('div', { class: 'dr-item' }, lab(x.note, 'Примечание'), lab(x.unit, 'Ед. изм. *'), lab(x.qty, 'Объём *')));
       x.title = title; x.del = del;
       rows.push(x); add(itemsBox, x.el);
-      suggest(x.unit, L.units); suggest(x.name, L.works);
+      suggest(x.unit, L.units); suggest(x.name, (L.items || []).concat(L.works || []));
       renum();
     }
     function renum() {
@@ -802,6 +1003,7 @@
       if (opt) { f.korp.value = opt.value; f.korp.dispatchEvent(new Event('change')); }
     });
 
+    var preview = h('div', { class: 'hint', id: 'r_preview', style: 'margin-top:-6px' });
     var msgBox = h('div', { 'aria-live': 'polite' });
     var bSave = h('button', { class: 'btn block', type: 'submit' }, 'Отправить');
     var form = h('form', { class: 'form', novalidate: true, onsubmit: function (ev) {
@@ -831,18 +1033,28 @@
       ab.use ? h('div', { class: 'field' }, h('span', { class: 'lbl-t' }, 'Направление *'), ab.dirBox) : null,
       ab.use ? h('div', { class: 'field' }, h('label', { for: 'f_appr' }, 'Согласующий от застройщика *'), ab.apprSel, ab.apprHint) : null,
       fld('dev2', 'Второй представитель застройщика в комиссии', 'Необязательно. Первым в акте будет тот, кто согласует.'),
-      fld('place', 'Место выполнения работ *'),
-      fld('summary', 'Перечень работ (кратко) *', 'В акте: «необходимо выполнить …, не учтённые проектной документацией».'),
+      fld('work', 'Наименование работ *', 'Как в акте передачи фронта, в именительном падеже — в акте склонится сам: «выполнить обратную засыпку пазух».'),
+      h('div', { class: 'grid-pre' }, fld('p1', 'Предлог'), fld('mark', 'Отметка / этажи')),
+      h('div', { class: 'grid-pre' }, fld('p2', 'Предлог'), fld('axes', 'Оси / помещения')),
+      preview,
+      fld('code', 'Шифр РД *', 'В акте: «Указанные работы не учтены в проектной (рабочей) документации шифр …».'),
       fld('reason', 'Обоснование *'),
       fld('basis', 'Основание', 'Документ: лист РД, письмо, поручение, предписание.'),
-      h('span', { class: 'lbl-t' }, 'Ведомость работ * (до 20 позиций)'),
+      h('span', { class: 'lbl-t' }, 'Ведомость работ * (позиций — сколько нужно)'),
       itemsBox, bAdd,
       h('div', { class: 'grid2' }, fld('pos', 'Должность подписанта *'), fld('name', 'Фамилия, инициалы *')),
       fld('note', 'Комментарий для застройщика'),
       h('div', { class: 'note-row' }, icon('info'), 'После согласования акт получает номер, документ и PDF формируются сразу.'),
       msgBox,
       h('div', { class: 'fab' }, bSave));
-    suggest(f.place, L.places);
+    suggest(f.work, L.works); suggest(f.mark, L.marks); suggest(f.code, L.codes);
+    function paintPreview() {
+      var t = drSentence({ work: f.work.value, p1: f.p1.value, mark: f.mark.value, p2: f.p2.value, axes: f.axes.value });
+      preview.textContent = t ? 'В акте: «…необходимо выполнить ' + t + '.»' : '';
+      preview.style.display = t ? '' : 'none';
+    }
+    ['work', 'p1', 'mark', 'p2', 'axes'].forEach(function (k) { f[k].addEventListener('input', paintPreview); f[k].addEventListener('change', paintPreview); });
+    paintPreview();
     add(r, h('div', { class: 'wrap' },
       h('div', { class: 'top' },
         h('a', { class: 'icon-btn', href: '#', 'aria-label': 'Назад к заявкам', html: ICON.back }),
@@ -885,7 +1097,7 @@
     }
     var arr = ST.dtab === 'fix' ? d.fix : ST.dtab === 'acts' ? d.acts : d.wait;
     if (scope() === 'mine') arr = arr.filter(function (v) { return v.mine; });
-    return q ? arr.filter(function (v) { return key([v.id, v.from, v.to, v.w1, v.w2, v.korp, v.mark, v.axes, v.apprName, v.contract, v.object, v.text, v.type === 'pl' ? 'площадка места производства' : '', v.type === 'dr' ? 'доп работы дополнительные ' + v.summary + ' ' + v.place + ' ' + v.num : ''].join(' ')).indexOf(q) >= 0; }) : arr;
+    return q ? arr.filter(function (v) { return key([v.id, v.from, v.to, v.w1, v.w2, v.korp, v.mark, v.axes, v.apprName, v.contract, v.object, v.text, v.type === 'pl' ? 'площадка места производства' : '', v.type === 'dr' ? 'доп работы дополнительные ' + v.work + ' ' + v.place + ' ' + v.code + ' ' + v.num : ''].join(' ')).indexOf(q) >= 0; }) : arr;
   }
   function findDev(id) {
     var d = ST.dev; if (!d) return null;
@@ -923,7 +1135,7 @@
       if (v.type === 'dr') return h('a', { class: 'card' + (v.forming ? '' : ST.dtab === 'wait' ? ' hot' : ''), href: '#d/' + encodeURIComponent(v.id), style: 'color:var(--tx)' },
         h('div', { class: 'c-head' }, h('span', { class: 'c-id' }, v.id + ' · ' + v.sent), statusChip(v)),
         h('div', { class: 'c-title' }, short(v.from), h('span', { class: 'chip bad', style: 'margin-left:8px;font-size:11px;padding:3px 8px' }, 'Доп. работы')),
-        h('div', { class: 'c-sub' }, v.summary + ' · позиций: ' + (v.items || []).length),
+        h('div', { class: 'c-sub' }, v.work + ' · позиций: ' + (v.items || []).length),
         h('div', { class: 'c-sub' }, ['Договор ' + v.contract, v.korp].filter(Boolean).join(' · ')),
         !v.mine || scope() === 'all' ? h('div', { class: 'c-sub' }, 'Согласующий: ' + (v.apprName || 'не назначен') + (v.dir ? ' · ' + v.dir : '')) : null);
       if (v.type === 'pl') return h('a', { class: 'card' + (v.forming ? '' : ST.dtab === 'wait' ? ' hot' : ''), href: '#d/' + encodeURIComponent(v.id), style: 'color:var(--tx)' },
@@ -952,7 +1164,7 @@
           onkeydown: function (ev) { if (ev.key === 'Enter') go('d/' + encodeURIComponent(v.id)); } },
           h('td', { class: 'mono' }, v.id),
           v.type === 'pl' ? h('td', { class: 'who' }, 'Площадка → ' + short(v.from)) : v.type === 'dr' ? h('td', { class: 'who' }, 'Доп. работы: ' + short(v.from)) : h('td', { class: 'who' }, short(v.from) + ' → ' + short(v.to)),
-          h('td', null, v.type === 'pl' ? 'Договор ' + v.contract + (v.cdate ? ' от ' + v.cdate : '') : v.type === 'dr' ? v.summary + ' (' + (v.items || []).length + ' поз.)' : v.w1 + ' → ' + v.w2),
+          h('td', null, v.type === 'pl' ? 'Договор ' + v.contract + (v.cdate ? ' от ' + v.cdate : '') : v.type === 'dr' ? v.work + ' (' + (v.items || []).length + ' поз.)' : v.w1 + ' → ' + v.w2),
           h('td', null, v.type === 'pl' ? plPlaces(v) : v.type === 'dr' ? [v.korp, v.place].filter(Boolean).join(' · ') : place(v)), h('td', { class: v.mine ? 'who' : '' }, (v.apprName || '—') + (v.dir ? ' · ' + v.dir : '')),
           h('td', null, ST.dtab === 'acts' ? (v.type === 'pl' ? 'площадка' : '№ ' + v.act) : (v.forming ? 'формируется' : v.sent)));
       }))) : h('div', { class: 'empty' }, emptyText()));
@@ -990,7 +1202,7 @@
   function detail(v) {
     var pl = v.type === 'pl' || v.type === 'dr';
     var facts = v.type === 'dr' ? [['Акт', 'Необходимость выполнения дополнительных работ'], ['Подрядчик', v.from],
-      ['Договор', v.contract + (v.cdate ? ' от ' + v.cdate : '')], ['Корпус', v.korp], ['Место', v.place], ['Работы', v.summary],
+      ['Договор', v.contract + (v.cdate ? ' от ' + v.cdate : '')], ['Корпус', v.korp], ['Работы', v.work], ['Место', v.place], ['Шифр РД', v.code],
       ['Обоснование', v.reason], ['Основание', v.basis], ['Ведомость', (v.items || []).map(drItemLine).join('\n')],
       ['Подписант', [v.pos, v.name].filter(Boolean).join(', ')], ['В комиссии', v.dev2Name ? 'вы (если согласуете) и ' + v.dev2Name : 'тот, кто согласует']]
       : v.type === 'pl' ? [['Акт', 'Приёмка-передача мест производства работ'], ['Подрядчик', v.from],
