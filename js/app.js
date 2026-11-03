@@ -5,7 +5,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '1.3.1';
+  var APP_VERSION = '1.4.0';
   var CFG = window.APP_CONFIG || { objects: [] };
   var ST = {
     obj: null, token: '', role: '', me: null, email: '',
@@ -46,6 +46,7 @@
     search: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#A1A1AA" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>',
     check: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
     ext: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A1A1AA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7M9 7h8v8"/></svg>',
+    users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.3-5.5 6.5-5.5s5.9 1.9 6.5 5.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.8c2 .7 3.2 2.5 3.5 5.2"/></svg>',
     info: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FF7A1A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>'
   };
   function icon(name, cls) { return h('span', { class: cls || '', html: ICON[name], style: 'display:inline-flex' }); }
@@ -94,7 +95,7 @@
   }
   function logout(silent) {
     if (ST.token && !silent) api('logout', ST.token).catch(function () {});
-    ST.token = ''; ST.role = ''; ST.me = null; ST.c = null; ST.pl = null; ST.dr = null; ST.dev = null; ST.sel = '';
+    ST.token = ''; ST.role = ''; ST.me = null; ST.c = null; ST.pl = null; ST.dr = null; ST.dev = null; ST.sel = ''; ST.pt = null; ST.ptEdit = null;
     store.set(sessKey() + 's', null);
     stopPoll();
   }
@@ -106,6 +107,7 @@
     if (hs === 'join') return renderJoin();
     if (!ST.token) return renderLogin();
     if (ST.role === 'dev') {
+      if (hs === 'parts') return renderParts();
       var m = hs.match(/^d\/(.+)$/);
       ST.sel = m ? decodeURIComponent(m[1]) : '';
       return renderDev();
@@ -275,9 +277,9 @@
     if (!ST.tab) ST.tab = store.get('pf:tab') || 'out';
     // дополнительные виды актов: null — грузится, false — сервер их не знает, объект — данные
     var EXT = [
-      { k: 'pl', data: ST.pl, label: 'Площадка', card: plCard, empty: 'Заявок на акт мест производства работ пока нет. Нажмите «Новая заявка».',
+      { k: 'pl', data: ST.pl, label: 'Акт приёма-передачи площадки', card: plCard, empty: 'Заявок на акт мест производства работ пока нет. Нажмите «Новая заявка».',
         note: 'Акт приёмки-передачи мест производства работ: технический заказчик передаёт вам места (оси, отметки) для работ по договору.' },
-      { k: 'dr', data: ST.dr, label: 'Доп. работы', card: drCard, empty: 'Заявок на акт необходимости доп. работ пока нет. Нажмите «Новая заявка».',
+      { k: 'dr', data: ST.dr, label: 'Акт необходимости доп. работ', card: drCard, empty: 'Заявок на акт необходимости доп. работ пока нет. Нажмите «Новая заявка».',
         note: 'Акт необходимости выполнения дополнительных работ: работы, не учтённые проектом и договором, с обоснованием и ведомостью объёмов.' }];
     var ext = EXT.filter(function (x) { return x.k === ST.tab; })[0];
     if (ext && ext.data === false) { ST.tab = 'out'; ext = null; }
@@ -294,14 +296,19 @@
       list = arr.length ? arr.map(function (it) { return card(it, ST.tab === 'out'); })
         : h('div', { class: 'empty' }, ST.tab === 'out' ? 'Заявок пока нет. Нажмите «Новая заявка».' : 'Входящих заявок нет.');
     }
-    var tabs = [tabBtn('out', 'Передаю · ' + d.out.length), tabBtn('inc', 'Принимаю · ' + d.inc.length)];
+    // 1.4: виды актов — полными названиями; фронт работ — «передаю / принимаю»
+    var front = ST.tab === 'out' || ST.tab === 'inc';
+    var nav = [h('div', { class: 'an-grp' + (front ? ' on' : '') }, h('div', { class: 'an-t' }, 'Акт приёма-передачи фронта работ'),
+      h('div', { class: 'seg', role: 'tablist' }, tabBtn('out', 'Передаю · ' + d.out.length), tabBtn('inc', 'Принимаю · ' + d.inc.length)))];
     EXT.forEach(function (x) {
       var okx = !!(x.data && x.data.items);
-      if (okx || (ST.tab === x.k && x.data === null)) tabs.push(tabBtn(x.k, x.label + (okx ? ' · ' + x.data.items.length : '')));
+      if (okx || (ST.tab === x.k && x.data === null)) nav.push(h('button', { type: 'button', role: 'tab', class: 'an-b' + (ST.tab === x.k ? ' on' : ''),
+        'aria-selected': String(ST.tab === x.k), onclick: function () { ST.tab = x.k; store.set('pf:tab', x.k); renderContractor(); } },
+        h('span', null, x.label), h('b', null, okx ? String(x.data.items.length) : '…')));
     });
     add(r, h('div', { class: 'wrap' },
       topBar('Мои заявки', d.org),
-      h('div', { class: 'seg' + (tabs.length > 3 ? ' seg4' : ''), role: 'tablist' }, tabs),
+      h('div', { class: 'actnav', 'aria-label': 'Виды актов' }, nav),
       ext ? h('div', { class: 'note-row' }, icon('info'), ext.note) : null,
       ext && ext.data && ext.data.lists && ext.data.lists.warn ? h('div', { class: 'msg err' }, ext.data.lists.warn) : null,
       h('div', { class: 'list' }, list)));
@@ -346,6 +353,9 @@
     });
     return b;
   }
+
+  /* смысловой текст акта между полями формы — бледным шрифтом */
+  function ctx(text) { return h('div', { class: 'ctx' }, text); }
 
   /* ---------- форма заявки ---------- */
   function suggest(input, list) {
@@ -468,14 +478,20 @@
     } },
       it ? h('div', { class: 'msg good' }, 'Изменение заявки ' + it.id + ': после отправки проект акта пересоздастся, согласование начнётся заново.') : null,
       it && (it.ddec || it.dnote) ? h('div', { class: 'msg ok' }, 'Застройщик: ' + [it.ddec, it.dnote].filter(Boolean).join(' — ')) : null,
+      ctx('Акт № … от (дата) организации приёма-передачи фронта работ. Объект и адрес подставятся сами.'),
       h('div', { class: 'grid2' }, fld('date', 'Дата *'), fld('korp', 'Корпус *')),
       useAppr ? h('div', { class: 'field' }, h('span', { class: 'lbl-t' }, 'Направление *'), dirBox) : null,
       useAppr ? h('div', { class: 'field' }, h('label', { for: 'f_appr' }, 'Согласующий от застройщика *'), apprSel, apprHint) : null,
-      fld('to', 'Кому передаю фронт *'),
+      ctx('«Мы, нижеподписавшаяся комиссия, составили настоящий акт о том, что ' + ST.c.org + ' выполнил…»'),
       fld('w1', 'Мои выполненные работы *'),
+      ctx('«…и передаёт, а…»'),
+      fld('to', 'Кому передаю фронт *'),
+      ctx('«…принимает их для последующего производства работ…»'),
       fld('w2', 'Работы принимающего *'),
+      ctx('«…в корпусе (из поля «Корпус») — где именно:»'),
       h('div', { class: 'grid-pre' }, fld('p1', 'Предлог'), fld('mark', 'Отметка')),
       h('div', { class: 'grid-pre' }, fld('p2', 'Предлог'), fld('axes', 'Оси')),
+      ctx('«Приложение: …» — схема, на которую ссылается акт.'),
       fld('app', 'Приложение'),
       fld('note', 'Комментарий для застройщика'),
       h('div', { class: 'note-row' }, icon('info'), 'Новую организацию или работу впишите целиком — она добавится в справочник. После отправки сразу появится проект акта «не подписывать».'),
@@ -485,9 +501,9 @@
     add(r, h('div', { class: 'wrap' },
       h('div', { class: 'top' },
         h('a', { class: 'icon-btn', href: '#', 'aria-label': 'Назад к заявкам', html: ICON.back }),
-        h('div', { class: 'grow' }, h('div', { class: 't-sub' }, ST.c.org), h('div', { class: 't-main' }, it ? 'Заявка ' + it.id : 'Новая заявка'))),
+        h('div', { class: 'grow' }, h('div', { class: 't-sub' }, 'Акт приёма-передачи фронта работ · ' + ST.c.org), h('div', { class: 't-main' }, it ? 'Заявка ' + it.id : 'Новая заявка'))),
       form));
-    (it ? f.w1 : f.to).focus();
+    f.w1.focus();
   }
 
   /* ---------- площадка (акт приёмки-передачи мест производства работ) ---------- */
@@ -662,18 +678,24 @@
       it ? h('div', { class: 'msg good' }, 'Изменение заявки ' + it.id + ': после отправки согласование начнётся заново.') : null,
       it && (it.ddec || it.dnote) ? h('div', { class: 'msg ok' }, 'Застройщик: ' + [it.ddec, it.dnote].filter(Boolean).join(' — ')) : null,
       fromSel ? h('div', { class: 'field' }, h('label', { for: 'p_from' }, 'Заполнить по договору'), fromSel) : null,
+      ctx('«Приложение к Договору подряда № … от … — Акт приёма-передачи мест производства работ»'),
       h('div', { class: 'grid2' }, fld('contract', '№ договора *'), fld('cdate', 'Дата договора *')),
+      ctx('«Наименование объекта: …»'),
       fld('object', 'Наименование объекта (как в договоре) *'),
       fld('korp', 'Корпус *'),
       ab.use ? h('div', { class: 'field' }, h('span', { class: 'lbl-t' }, 'Направление *'), ab.dirBox) : null,
       ab.use ? h('div', { class: 'field' }, h('label', { for: 'f_appr' }, 'Согласующий от застройщика *'), ab.apprSel, ab.apprHint) : null,
+      ctx('«Представитель, передающий места производства работ, — технический заказчик (подставит застройщик), и представитель Подрядчика, принимающий места производства работ:»'),
       h('div', { class: 'grid2' }, fld('pos', 'Должность подписанта *'), fld('name', 'Фамилия, инициалы *')),
+      ctx('«…для выполнения:»'),
       fld('works', 'Наименование работ (по договору) *'),
+      ctx('«…место проведения работ, оси, отметки:»'),
       h('span', { class: 'lbl-t' }, 'Места производства работ * (до 5)'),
       placesBox, bAdd,
       prev,
+      ctx('«…предусмотренных договором подряда. Технический заказчик передал, а Подрядчик принял места производства работ в состоянии, надлежащем для выполнения работ по Договору.»'),
       fld('note', 'Комментарий для застройщика'),
-      h('div', { class: 'note-row' }, icon('info'), 'После согласования акт и PDF формируются сразу. Технический заказчик в акте — по таблице сбора застройщика.'),
+      h('div', { class: 'note-row' }, icon('info'), 'После согласования акт и PDF формируются сразу. Технического заказчика в акт подставляет приложение — по списку «Участники объекта» застройщика.'),
       msgBox,
       h('div', { class: 'fab' }, bSave));
     suggest(f.object, L.objects);
@@ -681,7 +703,7 @@
     add(r, h('div', { class: 'wrap' },
       h('div', { class: 'top' },
         h('a', { class: 'icon-btn', href: '#', 'aria-label': 'Назад к заявкам', html: ICON.back }),
-        h('div', { class: 'grow' }, h('div', { class: 't-sub' }, 'Акт мест производства работ · ' + ST.c.org), h('div', { class: 't-main' }, it ? 'Заявка ' + it.id : 'Новая заявка'))),
+        h('div', { class: 'grow' }, h('div', { class: 't-sub' }, 'Акт приёма-передачи площадки · ' + ST.c.org), h('div', { class: 't-main' }, it ? 'Заявка ' + it.id : 'Новая заявка'))),
       form));
     (fromSel && !it ? fromSel : f.contract).focus();
   }
@@ -1028,20 +1050,29 @@
       it ? h('div', { class: 'msg good' }, 'Изменение заявки ' + it.id + ': после отправки согласование начнётся заново.') : null,
       it && (it.ddec || it.dnote) ? h('div', { class: 'msg ok' }, 'Застройщик: ' + [it.ddec, it.dnote].filter(Boolean).join(' — ')) : null,
       fromSel ? h('div', { class: 'field' }, h('label', { for: 'r_from' }, 'Заполнить по договору'), fromSel) : null,
+      ctx('«Акт № … от … необходимости выполнения дополнительных работ. Объект: … Адрес: …» — подставятся сами.'),
+      ctx('«Договор подряда: № … от …»'),
       h('div', { class: 'grid2' }, fld('contract', '№ договора *'), fld('cdate', 'Дата договора *')),
+      ctx('«Корпус: …»'),
       fld('korp', 'Корпус *'),
       ab.use ? h('div', { class: 'field' }, h('span', { class: 'lbl-t' }, 'Направление *'), ab.dirBox) : null,
       ab.use ? h('div', { class: 'field' }, h('label', { for: 'f_appr' }, 'Согласующий от застройщика *'), ab.apprSel, ab.apprHint) : null,
       fld('dev2', 'Второй представитель застройщика в комиссии', 'Необязательно. Первым в акте будет тот, кто согласует.'),
+      ctx('«Мы, нижеподписавшаяся комиссия в составе представителей Застройщика, Технического заказчика и Подрядчика, составили настоящий акт о том, что Подрядчику ' + ST.c.org + ' необходимо выполнить…»'),
       fld('work', 'Наименование работ *', 'Как в акте передачи фронта, в именительном падеже — в акте склонится сам: «выполнить обратную засыпку пазух».'),
+      ctx('«…где именно:»'),
       h('div', { class: 'grid-pre' }, fld('p1', 'Предлог'), fld('mark', 'Отметка / этажи')),
       h('div', { class: 'grid-pre' }, fld('p2', 'Предлог'), fld('axes', 'Оси / помещения')),
       preview,
+      ctx('«Указанные работы не учтены в проектной (рабочей) документации шифр…»'),
       fld('code', 'Шифр РД *', 'В акте: «Указанные работы не учтены в проектной (рабочей) документации шифр …».'),
+      ctx('«Обоснование необходимости выполнения работ:»'),
       fld('reason', 'Обоснование *'),
       fld('basis', 'Основание', 'Документ: лист РД, письмо, поручение, предписание.'),
+      ctx('«Ведомость видов и объёмов дополнительных работ:» — таблица в акте.'),
       h('span', { class: 'lbl-t' }, 'Ведомость работ * (позиций — сколько нужно)'),
       itemsBox, bAdd,
+      ctx('«Комиссия: Застройщик — тот, кто согласует, и второй представитель (если выбран); Технический заказчик — подставит приложение; Подрядчик —»'),
       h('div', { class: 'grid2' }, fld('pos', 'Должность подписанта *'), fld('name', 'Фамилия, инициалы *')),
       fld('note', 'Комментарий для застройщика'),
       h('div', { class: 'note-row' }, icon('info'), 'После согласования акт получает номер, документ и PDF формируются сразу.'),
@@ -1171,7 +1202,7 @@
 
     add(r, h('div', { class: 'wrap wide' },
       topBar(isJ ? 'Подключение организаций' : ST.dtab === 'fix' ? 'На доработке' : ST.dtab === 'acts' ? 'Сформированные акты' : 'На согласование', (d.name ? d.name + ' · ' : '') + 'Застройщик',
-        null),
+        h('a', { class: 'icon-btn', href: '#parts', 'aria-label': 'Участники объекта: застройщик и технический заказчик', title: 'Участники объекта', html: ICON.users })),
       h('div', { class: 'dev-grid' + (ST.sel ? ' has-sel' : '') },
         h('section', { class: 'dev-list' },
           scopeSeg,
@@ -1181,6 +1212,105 @@
           cards, table),
         h('aside', { class: 'dev-detail', 'aria-label': 'Заявка' }, sel ? (isJ || /^П/.test(sel.id) && sel.org ? joinDetail(sel) : detail(sel)) : h('div', { class: 'empty' }, 'Выберите заявку')))));
   }
+  /* ---------- участники объекта (застройщик, техзаказчик) — 1.4 ---------- */
+  function renderParts() {
+    var r = root(); r.innerHTML = '';
+    var top = h('div', { class: 'top' },
+      h('a', { class: 'icon-btn', href: '#', 'aria-label': 'Назад к согласованию', html: ICON.back }),
+      h('div', { class: 'grow' }, h('div', { class: 't-sub' }, 'Для всех актов объекта'), h('div', { class: 't-main' }, 'Участники объекта')));
+    if (!ST.pt) {
+      add(r, h('div', { class: 'wrap' }, top, h('div', { class: 'empty' }, h('span', { class: 'spin' }), ' Загрузка…')));
+      api('ptLoad', ST.token).then(function (x) { ST.pt = x; if (location.hash === '#parts') renderParts(); })
+        .catch(function (e) { add(r.firstChild, h('div', { class: 'msg err' }, /Неизвестный запрос/.test(e.message) ? 'Сервер ещё не обновлён — список участников недоступен.' : e.message)); });
+      return;
+    }
+    var P = ST.pt;
+    var edit = ST.ptEdit || null;                      // {kind, role, row} — что открыто на правку
+    function save(op, done) {
+      return api('ptSave', ST.token, op).then(function (x) { ST.pt = x; ST.ptEdit = null; toast(done); renderParts(); })
+        .catch(function (e) { toast(e.message, true); });
+    }
+    function open(e) { ST.ptEdit = e; renderParts(); }
+    function rowForm(role, it) {
+      var f = { org: h('input', { class: 'inp', value: it ? it.org : (role === 'Технический заказчик' && P.tech[0] ? P.tech[0].org : ''), placeholder: 'ООО «…»' }),
+        pos: h('input', { class: 'inp', value: it ? it.pos : '', placeholder: 'Должность' }),
+        name: h('input', { class: 'inp', value: it ? it.name : '', placeholder: 'Фамилия И. О.' }),
+        main: h('input', { type: 'checkbox', checked: !it || it.main ? true : null }) };
+      var lab = function (el, t) { var id = 'pt' + Math.random().toString(36).slice(2, 8); el.id = id; return h('div', { class: 'field' }, h('label', { for: id }, t), el); };
+      var b = h('button', { class: 'btn sm', type: 'submit' }, 'Сохранить');
+      return h('form', { class: 'panel', style: 'padding:14px;gap:10px', onsubmit: function (ev) {
+        ev.preventDefault(); b.disabled = true;
+        save({ kind: 'row', role: role, row: it ? it.row : 0, org: f.org.value, pos: f.pos.value, name: f.name.value, main: f.main.checked },
+          it ? 'Изменения сохранены.' : 'Добавлено.').then(function () { b.disabled = false; });
+      } },
+        lab(f.org, 'Организация *'),
+        role === 'Технический заказчик' ? h('div', { class: 'grid2' }, lab(f.pos, 'Должность'), lab(f.name, 'ФИО *')) : null,
+        h('label', { class: 'chk' }, f.main, 'В акты — этот (основной)'),
+        h('div', { class: 'c-btns', style: 'display:flex;gap:8px' }, b, h('button', { class: 'btn ghost sm', type: 'button', onclick: function () { open(null); } }, 'Отмена')));
+    }
+    function repForm(it) {
+      var dirs = (it && it.dirs ? it.dirs.split(/[,;]\s*/) : []);
+      var f = { email: h('input', { class: 'inp mono', value: it ? it.email : '', placeholder: 'name@company.ru', inputmode: 'email' }),
+        name: h('input', { class: 'inp', value: it ? it.name : '', placeholder: 'Фамилия И. О.' }),
+        pos: h('input', { class: 'inp', value: it ? it.pos : '', placeholder: 'Должность' }),
+        korp: h('input', { class: 'inp', value: it ? it.korp : '', placeholder: 'пусто — все корпуса' }),
+        on: h('input', { type: 'checkbox', checked: !it || it.on ? true : null }) };
+      var dchk = (P.dirs || []).map(function (d) { return h('label', { class: 'chk' }, h('input', { type: 'checkbox', value: d, checked: dirs.indexOf(d) >= 0 ? true : null }), d); });
+      var lab = function (el, t) { var id = 'pr' + Math.random().toString(36).slice(2, 8); el.id = id; return h('div', { class: 'field' }, h('label', { for: id }, t), el); };
+      var b = h('button', { class: 'btn sm', type: 'submit' }, 'Сохранить');
+      return h('form', { class: 'panel', style: 'padding:14px;gap:10px', onsubmit: function (ev) {
+        ev.preventDefault(); b.disabled = true;
+        save({ kind: 'rep', row: it ? it.row : 0, email: f.email.value, name: f.name.value, pos: f.pos.value, korp: f.korp.value, on: f.on.checked,
+          dirs: dchk.map(function (l) { return l.firstChild; }).filter(function (c) { return c.checked; }).map(function (c) { return c.value; }) },
+          it ? 'Изменения сохранены.' : 'Представитель добавлен — может входить в приложение.').then(function () { b.disabled = false; });
+      } },
+        lab(f.email, 'E-mail для входа *'),
+        h('div', { class: 'grid2' }, lab(f.name, 'ФИО *'), lab(f.pos, 'Должность')),
+        lab(f.korp, 'Корпуса (через запятую)'),
+        h('div', { class: 'field' }, h('span', { class: 'lbl-t' }, 'Направления (не отмечено — все)'), h('div', { style: 'display:flex;gap:18px' }, dchk)),
+        h('label', { class: 'chk' }, f.on, 'Доступ в приложение'),
+        h('div', { style: 'display:flex;gap:8px' }, b, h('button', { class: 'btn ghost sm', type: 'button', onclick: function () { open(null); } }, 'Отмена')));
+    }
+    function rows(role, list) {
+      return list.map(function (it) {
+        if (edit && edit.kind === 'row' && edit.row === it.row) return rowForm(role, it);
+        var del = h('button', { class: 'linkbtn', type: 'button', style: 'color:var(--mut)' }, 'Удалить');
+        del.addEventListener('click', function () {
+          if (del.dataset.sure !== '1') { del.dataset.sure = '1'; del.textContent = 'Точно удалить?'; return; }
+          save({ kind: 'del', row: it.row }, 'Удалено.');
+        });
+        return h('div', { class: 'pt-row' },
+          h('div', { class: 'pt-main' }, role === 'Технический заказчик' ? [it.pos, it.name].filter(Boolean).join(', ') : it.org,
+            it.main ? h('span', { class: 'chip act', style: 'margin-left:8px;font-size:11px;padding:3px 8px' }, 'в актах') : null),
+          h('div', { class: 'pt-sub' }, [role === 'Технический заказчик' ? it.org : '', it.time ? 'изменено ' + it.time + (it.by ? ', ' + it.by : '') : ''].filter(Boolean).join(' · ')),
+          h('div', { class: 'pt-act' },
+            it.main ? null : h('button', { class: 'linkbtn', type: 'button', onclick: function () { save({ kind: 'main', row: it.row }, 'Теперь в актах: ' + (it.name || it.org) + '.'); } }, 'Сделать основным'),
+            h('button', { class: 'linkbtn', type: 'button', onclick: function () { open({ kind: 'row', row: it.row }); } }, 'Изменить'),
+            it.main && list.length > 1 ? null : del));
+      });
+    }
+    var newBtn = function (k, role, text) {
+      if (edit && edit.kind === k && !edit.row && edit.role === role) return k === 'rep' ? repForm(null) : rowForm(role, null);
+      return h('button', { class: 'btn ghost sm', type: 'button', onclick: function () { open({ kind: k, role: role, row: 0 }); } }, icon('plus'), text);
+    };
+    var reps = (P.devReps || []).map(function (it) {
+      if (edit && edit.kind === 'rep' && edit.row === it.row) return repForm(it);
+      return h('div', { class: 'pt-row' },
+        h('div', { class: 'pt-main' }, [it.pos, it.name].filter(Boolean).join(', '), it.on ? null : h('span', { class: 'chip bad', style: 'margin-left:8px;font-size:11px;padding:3px 8px' }, 'без доступа')),
+        h('div', { class: 'pt-sub' }, [it.email, it.korp ? 'корпуса: ' + it.korp : 'все корпуса', it.dirs || 'все направления'].join(' · ')),
+        h('div', { class: 'pt-act' }, h('button', { class: 'linkbtn', type: 'button', onclick: function () { open({ kind: 'rep', row: it.row }); } }, 'Изменить')));
+    });
+    add(r, h('div', { class: 'wrap', style: 'padding-bottom:40px' }, top,
+      h('div', { class: 'note-row' }, icon('info'), 'Один список на все акты объекта: акт приёма-передачи фронта работ, площадки и необходимости доп. работ. Замена действует на новые акты; уже сформированные не меняются.'),
+      h('section', { class: 'panel', style: 'margin-top:14px' }, h('div', { class: 'pt-head' }, h('h2', null, 'Застройщик')), rows('Застройщик', P.dev || []), newBtn('row', 'Застройщик', 'Организация')),
+      h('section', { class: 'panel', style: 'margin-top:14px' }, h('div', { class: 'pt-head' }, h('h2', null, 'Представители застройщика')),
+        h('div', { class: 'pt-sub', style: 'font-size:13px;color:var(--mut)' }, 'В акт попадает тот, кто согласовал заявку (и второй представитель, если его выбрал подрядчик). Здесь же — доступ в приложение.'),
+        reps, newBtn('rep', '', 'Представитель застройщика')),
+      h('section', { class: 'panel', style: 'margin-top:14px' }, h('div', { class: 'pt-head' }, h('h2', null, 'Технический заказчик')),
+        h('div', { class: 'pt-sub', style: 'font-size:13px;color:var(--mut)' }, 'В акты идёт основной. Чтобы заменить — добавьте нового и отметьте «в акты» или нажмите «Сделать основным».'),
+        rows('Технический заказчик', P.tech || []), newBtn('row', 'Технический заказчик', 'Представитель техзаказчика'))));
+  }
+
   function emptyText() { return ST.q ? 'Ничего не найдено.' : ST.dtab === 'joins' ? 'Новых заявок нет.' : scope() === 'mine' && ST.dtab !== 'acts' ? 'В «Мои» пусто. Заявки коллег — во вкладке «Все».' : ST.dtab === 'wait' ? 'Все заявки рассмотрены.' : ST.dtab === 'fix' ? 'На доработке ничего нет.' : 'Актов пока нет.'; }
   function short(s) { return String(s || '').replace(/^(ООО|АО|ПАО|ЗАО|ИП)\s+/, '').replace(/[«»"]/g, ''); }
   function place(v) { return [v.korp, [v.p1, v.mark].filter(Boolean).join(' '), [v.p2, v.axes].filter(Boolean).join(' ')].filter(Boolean).join(' · '); }
