@@ -1,14 +1,15 @@
-/* Генератор актов — приложение (подрядчик и застройщик). Версия 1.2, 03.11.2026.
+/* Генератор актов — приложение (подрядчик и застройщик). Версия 1.3, 03.11.2026.
+ * 1.3: третий тип акта — необходимость выполнения дополнительных работ («Доп. работы»).
  * 1.2: второй тип акта — приёмка-передача мест производства работ («Площадка»): вкладка у подрядчика, заявки в окне застройщика.
  * Данные и акты — в Google Таблице объекта; связь — через API веб-приложения Apps Script (config.js). */
 (function () {
   'use strict';
 
-  var APP_VERSION = '1.2.3';
+  var APP_VERSION = '1.3.0';
   var CFG = window.APP_CONFIG || { objects: [] };
   var ST = {
     obj: null, token: '', role: '', me: null, email: '',
-    c: null, pl: null, dev: null, tab: '', dtab: 'wait', scope: '', q: '', sel: '', editId: '', cfg: null,
+    c: null, pl: null, dr: null, dev: null, tab: '', dtab: 'wait', scope: '', q: '', sel: '', editId: '', cfg: null,
     loading: false, lastLoad: 0, pollN: 0, pollT: 0, kickT: 0, msg: null
   };
 
@@ -93,7 +94,7 @@
   }
   function logout(silent) {
     if (ST.token && !silent) api('logout', ST.token).catch(function () {});
-    ST.token = ''; ST.role = ''; ST.me = null; ST.c = null; ST.pl = null; ST.dev = null; ST.sel = '';
+    ST.token = ''; ST.role = ''; ST.me = null; ST.c = null; ST.pl = null; ST.dr = null; ST.dev = null; ST.sel = '';
     store.set(sessKey() + 's', null);
     stopPoll();
   }
@@ -109,6 +110,9 @@
       ST.sel = m ? decodeURIComponent(m[1]) : '';
       return renderDev();
     }
+    if (hs === 'dr/new') return renderDrForm(null);
+    var de = hs.match(/^dr\/edit\/(.+)$/);
+    if (de) return renderDrForm(findDr(decodeURIComponent(de[1])));
     if (hs === 'pl/new') return renderPlForm(null);
     var pe = hs.match(/^pl\/edit\/(.+)$/);
     if (pe) return renderPlForm(findPl(decodeURIComponent(pe[1])));
@@ -258,8 +262,9 @@
     return api('load', ST.token).then(function (d) {
       ST.loading = false; ST.c = d; ST.lastLoad = Date.now();
       ST.me = ST.me || {}; ST.me.org = d.org; saveSession();
-      if (!/^#(new|edit|pl)/.test(location.hash)) renderContractor();
+      if (!/^#(new|edit|pl|dr)/.test(location.hash)) renderContractor();
       if (ST.pl === null) loadPl(true);
+      if (ST.dr === null) loadDr(true);
     }).catch(function (e) { ST.loading = false; if (e.code !== 'SESSION') toast(e.message, true); });
   }
 
@@ -268,30 +273,39 @@
     if (!ST.c) { add(r, h('div', { class: 'wrap' }, topBar('Мои заявки', ST.me && ST.me.org), h('div', { class: 'empty' }, h('span', { class: 'spin' }), ' Загрузка…'))); loadContractor(true); return; }
     var d = ST.c;
     if (!ST.tab) ST.tab = store.get('pf:tab') || 'out';
-    var plOk = !!(ST.pl && ST.pl.items);
-    if (ST.tab === 'pl' && ST.pl === false) ST.tab = 'out';
-    var hasPl = plOk || (ST.tab === 'pl' && ST.pl === null);          // null — ещё загружается
+    // дополнительные виды актов: null — грузится, false — сервер их не знает, объект — данные
+    var EXT = [
+      { k: 'pl', data: ST.pl, label: 'Площадка', card: plCard, empty: 'Заявок на акт мест производства работ пока нет. Нажмите «Новая заявка».',
+        note: 'Акт приёмки-передачи мест производства работ: технический заказчик передаёт вам места (оси, отметки) для работ по договору.' },
+      { k: 'dr', data: ST.dr, label: 'Доп. работы', card: drCard, empty: 'Заявок на акт необходимости доп. работ пока нет. Нажмите «Новая заявка».',
+        note: 'Акт необходимости выполнения дополнительных работ: работы, не учтённые проектом и договором, с обоснованием и ведомостью объёмов.' }];
+    var ext = EXT.filter(function (x) { return x.k === ST.tab; })[0];
+    if (ext && ext.data === false) { ST.tab = 'out'; ext = null; }
     var tabBtn = function (k, label) {
       return h('button', { type: 'button', role: 'tab', class: ST.tab === k ? 'on' : '', 'aria-selected': String(ST.tab === k), onclick: function () { ST.tab = k; store.set('pf:tab', k); renderContractor(); } }, label);
     };
     var list;
-    if (ST.tab === 'pl' && !plOk) {
+    if (ext && !(ext.data && ext.data.items)) {
       list = h('div', { class: 'empty' }, h('span', { class: 'spin' }), ' Загрузка…');
-    } else if (ST.tab === 'pl') {
-      list = ST.pl.items.length ? ST.pl.items.map(plCard) : h('div', { class: 'empty' }, 'Заявок на акт мест производства работ пока нет. Нажмите «Новая заявка».');
+    } else if (ext) {
+      list = ext.data.items.length ? ext.data.items.map(ext.card) : h('div', { class: 'empty' }, ext.empty);
     } else {
       var arr = ST.tab === 'out' ? d.out : d.inc;
       list = arr.length ? arr.map(function (it) { return card(it, ST.tab === 'out'); })
         : h('div', { class: 'empty' }, ST.tab === 'out' ? 'Заявок пока нет. Нажмите «Новая заявка».' : 'Входящих заявок нет.');
     }
+    var tabs = [tabBtn('out', 'Передаю · ' + d.out.length), tabBtn('inc', 'Принимаю · ' + d.inc.length)];
+    EXT.forEach(function (x) {
+      var okx = !!(x.data && x.data.items);
+      if (okx || (ST.tab === x.k && x.data === null)) tabs.push(tabBtn(x.k, x.label + (okx ? ' · ' + x.data.items.length : '')));
+    });
     add(r, h('div', { class: 'wrap' },
       topBar('Мои заявки', d.org),
-      h('div', { class: 'seg', role: 'tablist' }, tabBtn('out', 'Передаю · ' + d.out.length), tabBtn('inc', 'Принимаю · ' + d.inc.length),
-        hasPl ? tabBtn('pl', 'Площадка' + (plOk ? ' · ' + ST.pl.items.length : '')) : null),
-      ST.tab === 'pl' ? h('div', { class: 'note-row' }, icon('info'), 'Акт приёмки-передачи мест производства работ: технический заказчик передаёт вам места (оси, отметки) для работ по договору.') : null,
-      ST.tab === 'pl' && plOk && ST.pl.lists && ST.pl.lists.warn ? h('div', { class: 'msg err' }, ST.pl.lists.warn) : null,
+      h('div', { class: 'seg' + (tabs.length > 3 ? ' seg4' : ''), role: 'tablist' }, tabs),
+      ext ? h('div', { class: 'note-row' }, icon('info'), ext.note) : null,
+      ext && ext.data && ext.data.lists && ext.data.lists.warn ? h('div', { class: 'msg err' }, ext.data.lists.warn) : null,
       h('div', { class: 'list' }, list)));
-    if (ST.tab !== 'inc') add(r, h('div', { class: 'fab' }, h('a', { class: 'btn', href: ST.tab === 'pl' ? '#pl/new' : '#new' }, icon('plus'), 'Новая заявка')));
+    if (ST.tab !== 'inc') add(r, h('div', { class: 'fab' }, h('a', { class: 'btn', href: ext ? '#' + ext.k + '/new' : '#new' }, icon('plus'), 'Новая заявка')));
   }
 
   function topBar(title, sub, extra) {
@@ -482,10 +496,10 @@
   function loadPl(quiet) {
     return api('plLoad', ST.token).then(function (d) {
       ST.pl = d;
-      if (ST.role !== 'dev' && !/^#(new|edit|pl)/.test(location.hash)) renderContractor();
+      if (ST.role !== 'dev' && !/^#(new|edit|pl|dr)/.test(location.hash)) renderContractor();
     }).catch(function (e) {
       ST.pl = /Неизвестный запрос/.test(e.message) ? false : null;
-      if (ST.pl === false && ST.role !== 'dev' && ST.c && !/^#(new|edit|pl)/.test(location.hash)) renderContractor();
+      if (ST.pl === false && ST.role !== 'dev' && ST.c && !/^#(new|edit|pl|dr)/.test(location.hash)) renderContractor();
       if (!quiet && e.code !== 'SESSION') toast(e.message, true);
     });
   }
@@ -672,6 +686,171 @@
     (fromSel && !it ? fromSel : f.contract).focus();
   }
 
+  /* ---------- доп. работы (акт необходимости выполнения дополнительных работ) ---------- */
+  function findDr(id) { return ST.dr && ST.dr.items ? ST.dr.items.filter(function (x) { return x.id === id; })[0] || null : null; }
+  function loadDr(quiet) {
+    return api('drLoad', ST.token).then(function (d) {
+      ST.dr = d;
+      if (ST.role !== 'dev' && !/^#(new|edit|pl|dr)/.test(location.hash)) renderContractor();
+    }).catch(function (e) {
+      ST.dr = /Неизвестный запрос/.test(e.message) ? false : null;
+      if (ST.dr === false && ST.role !== 'dev' && ST.c && !/^#(new|edit|pl|dr)/.test(location.hash)) renderContractor();
+      if (!quiet && e.code !== 'SESSION') toast(e.message, true);
+    });
+  }
+  function drItemLine(x, i) { return (i + 1) + '. ' + x.name + ' — ' + x.qty + ' ' + x.unit + (x.note ? ' (' + x.note + ')' : ''); }
+  function drCard(it) {
+    var fix = /^На доработке/.test(it.status) || it.ddec === 'Отклонить';
+    var b = h('button', { class: 'btn mute sm', type: 'button' }, 'Отозвать');
+    b.addEventListener('click', function () {
+      if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Точно отозвать?'; return; }
+      b.disabled = true; b.textContent = 'Отзываем…';
+      api('drRevoke', ST.token, it.id).then(function () { toast('Заявка ' + it.id + ' отозвана.'); loadDr(true); })
+        .catch(function (e) { b.disabled = false; b.textContent = 'Отозвать'; delete b.dataset.sure; toast(e.message, true); });
+    });
+    var chip = it.done ? h('span', { class: 'chip act' }, 'Акт № ' + it.num) : plStatusChip(it.status);
+    return h('article', { class: 'card' + (fix && it.editable ? ' hot' : '') },
+      h('div', { class: 'c-head' }, h('span', { class: 'c-id' }, it.id + (it.sent ? ' · ' + it.sent : '')), chip),
+      h('div', { class: 'c-title' }, it.summary),
+      h('div', { class: 'c-sub' }, ['Договор ' + it.contract + (it.cdate ? ' от ' + it.cdate : ''), it.korp].filter(Boolean).join(' · ')),
+      h('div', { class: 'c-sub' }, it.place),
+      h('div', { class: 'c-sub', style: 'white-space:pre-line' }, (it.items || []).map(drItemLine).join('\n')),
+      it.apprName ? h('div', { class: 'c-sub' }, 'Согласующий: ' + it.apprName + (it.dir ? ' · ' + it.dir : '') + (it.dev2Name ? '; в комиссии также ' + it.dev2Name : '')) : null,
+      it.ddec || it.dnote ? h('div', { class: 'c-note' }, 'Застройщик: ' + [it.ddec, it.dnote].filter(Boolean).join(' — ')) : null,
+      h('div', { class: 'c-btns' },
+        it.docUrl ? linkBtn(it.docUrl, 'Акт № ' + it.num) : null,
+        it.pdfUrl ? linkBtn(it.pdfUrl, 'PDF') : null,
+        it.editable ? h('a', { class: fix ? 'btn sm' : 'btn ghost sm', href: '#dr/edit/' + encodeURIComponent(it.id) }, fix ? 'Исправить и отправить' : 'Изменить') : null,
+        it.revocable ? b : null));
+  }
+
+  function renderDrForm(it) {
+    if (!ST.c || !ST.dr) {
+      root().innerHTML = '';
+      Promise.resolve(ST.c ? null : loadContractor(true)).then(function () { return ST.dr ? null : loadDr(false); })
+        .then(function () { if (ST.dr) route(); else go(''); });
+      return;
+    }
+    var L = ST.dr.lists || {};
+    var r = root(); r.innerHTML = '';
+    ST.editId = it ? it.id : '';
+    var v = function (k) { return it ? (it[k] || '') : ''; };
+    var korpList = (L.korp || []).slice();
+    if (it && it.korp && korpList.indexOf(it.korp) < 0) korpList.push(it.korp);
+    var devs = ST.dr.devs || [];
+    var f = {
+      contract: h('input', { id: 'r_contract', class: 'inp mono', value: v('contract'), placeholder: 'ГУ-26-0000' }),
+      cdate: h('input', { id: 'r_cdate', class: 'inp mono', value: v('cdate'), placeholder: 'дд.мм.гг', inputmode: 'numeric' }),
+      korp: h('select', { id: 'r_korp', class: 'inp' }, h('option', { value: '' }, '—'),
+        korpList.map(function (x) { return h('option', { value: x, selected: x === v('korp') ? true : null }, x); })),
+      place: h('textarea', { id: 'r_place', class: 'inp', rows: '2', placeholder: 'корпус 5, техподполье, в осях 4-2/4-3, отм. -3.300' }, v('place')),
+      summary: h('input', { id: 'r_summary', class: 'inp', value: v('summary'), placeholder: 'работы по устройству гильз и противопожарных проходок' }),
+      reason: h('textarea', { id: 'r_reason', class: 'inp', rows: '4', placeholder: 'Почему работы нужны и почему их нет в проекте/договоре: изменение РД, коллизия, требование надзора…' }, v('reason')),
+      basis: h('input', { id: 'r_basis', class: 'inp', value: v('basis'), placeholder: 'РД ОВ2 лист 12 рев. 3; письмо № … от …; поручение …' }),
+      dev2: h('select', { id: 'r_dev2', class: 'inp' }, h('option', { value: '' }, '— не нужен —'),
+        devs.map(function (d) { return h('option', { value: d.id, selected: d.id === v('dev2') ? true : null }, d.name + (d.pos ? ' — ' + d.pos : '')); })),
+      pos: h('input', { id: 'r_pos', class: 'inp', value: v('pos'), placeholder: 'Генеральный директор' }),
+      name: h('input', { id: 'r_name', class: 'inp', value: v('name'), placeholder: 'Иванов И. И.' }),
+      note: h('textarea', { id: 'r_note', class: 'inp', rows: '2' }, v('note'))
+    };
+    var fld = function (k, label, hint) { return h('div', { class: 'field' }, h('label', { for: 'r_' + k }, label), f[k], hint ? h('div', { class: 'hint' }, hint) : null); };
+    var ab = apprBlock({ devs: devs, dirs: ST.dr.dirs || [] }, f.korp, it);
+
+    // ведомость: до 20 позиций
+    var MAX = 20, rows = [];
+    var itemsBox = h('div', { style: 'display:flex;flex-direction:column;gap:12px' });
+    var bAdd = h('button', { class: 'btn ghost sm', type: 'button', onclick: function () { addItem({}); } }, icon('plus'), 'Позиция');
+    function addItem(p) {
+      if (rows.length >= MAX) return;
+      var x = {
+        name: h('textarea', { class: 'inp', rows: '2', placeholder: 'Устройство гильз из стальных труб ∅108х4.0 с сальником' }, p.name || ''),
+        unit: h('input', { class: 'inp', value: p.unit || '', placeholder: 'шт.' }),
+        qty: h('input', { class: 'inp mono', value: p.qty || '', placeholder: '12', inputmode: 'decimal' }),
+        note: h('input', { class: 'inp', value: p.note || '', placeholder: 'необязательно' })
+      };
+      var title = h('span', { class: 'lbl-t' });
+      var del = h('button', { class: 'linkbtn', type: 'button', onclick: function () { rows.splice(rows.indexOf(x), 1); x.el.remove(); renum(); } }, 'Убрать');
+      var lab = function (el, t) { var id = 'ri' + Math.random().toString(36).slice(2, 8); el.id = id; return h('div', { class: 'field' }, h('label', { for: id }, t), el); };
+      x.el = h('div', { class: 'panel', style: 'padding:14px;gap:10px' },
+        h('div', { style: 'display:flex;justify-content:space-between;align-items:center' }, title, del),
+        lab(x.name, 'Наименование работ *'),
+        h('div', { class: 'dr-item' }, lab(x.note, 'Примечание'), lab(x.unit, 'Ед. изм. *'), lab(x.qty, 'Объём *')));
+      x.title = title; x.del = del;
+      rows.push(x); add(itemsBox, x.el);
+      suggest(x.unit, L.units); suggest(x.name, L.works);
+      renum();
+    }
+    function renum() {
+      rows.forEach(function (x, i) { x.title.textContent = 'Позиция ' + (i + 1); x.del.style.visibility = rows.length > 1 ? 'visible' : 'hidden'; });
+      bAdd.style.display = rows.length >= MAX ? 'none' : '';
+    }
+    function items() {
+      return rows.map(function (x) { return { name: x.name.value.trim(), unit: x.unit.value.trim(), qty: x.qty.value.trim(), note: x.note.value.trim() }; })
+        .filter(function (p) { return p.name || p.unit || p.qty || p.note; });
+    }
+    (it && it.items && it.items.length ? it.items : [{}]).forEach(addItem);
+
+    var contracts = L.contracts || [];
+    var fromSel = contracts.length ? h('select', { id: 'r_from', class: 'inp' }, h('option', { value: '' }, '— выберите договор, чтобы заполнить —'),
+      contracts.map(function (c, i) { return h('option', { value: String(i) }, c.contract + (c.cdate ? ' от ' + c.cdate : '')); })) : null;
+    if (fromSel) fromSel.addEventListener('change', function () {
+      var c = contracts[+fromSel.value]; if (!c) return;
+      f.contract.value = c.contract || ''; f.cdate.value = c.cdate || '';
+      if (c.pos) f.pos.value = c.pos; if (c.name) f.name.value = c.name;
+      var kk = plKorp(c.korp);
+      var opt = Array.prototype.filter.call(f.korp.options, function (o) { return o.value && plKorp(o.value) === kk; })[0];
+      if (opt) { f.korp.value = opt.value; f.korp.dispatchEvent(new Event('change')); }
+    });
+
+    var msgBox = h('div', { 'aria-live': 'polite' });
+    var bSave = h('button', { class: 'btn block', type: 'submit' }, 'Отправить');
+    var form = h('form', { class: 'form', novalidate: true, onsubmit: function (ev) {
+      ev.preventDefault();
+      var data = {}; Object.keys(f).forEach(function (k) { data[k] = f[k].value; });
+      data.items = items();
+      data.dir = ab.use ? ab.choice.dir : ''; data.appr = ab.use ? ab.apprSel.value : '';
+      if (ab.use) { store.set('pf:dir', data.dir); store.set('pf:appr', data.appr); }
+      bSave.disabled = true; bSave.innerHTML = ''; add(bSave, [h('span', { class: 'spin' }), ' Отправляем…']);
+      msgBox.innerHTML = '';
+      var wasEdit = !!ST.editId;
+      api('drSave', ST.token, data, ST.editId).then(function (x) {
+        toast(x.unchanged ? (wasEdit ? 'Изменений нет.' : 'Такая заявка уже подана — ' + x.id + '. Повторно не отправлена.')
+          : 'Заявка ' + x.id + ' отправлена. Статус: ' + x.status + '.');
+        ST.tab = 'dr'; store.set('pf:tab', 'dr'); ST.dr = null; go('');
+        loadDr(true);
+      }).catch(function (e) {
+        bSave.disabled = false; bSave.textContent = 'Отправить';
+        msgBox.innerHTML = ''; add(msgBox, h('div', { class: 'msg err' }, e.message));
+      });
+    } },
+      it ? h('div', { class: 'msg good' }, 'Изменение заявки ' + it.id + ': после отправки согласование начнётся заново.') : null,
+      it && (it.ddec || it.dnote) ? h('div', { class: 'msg ok' }, 'Застройщик: ' + [it.ddec, it.dnote].filter(Boolean).join(' — ')) : null,
+      fromSel ? h('div', { class: 'field' }, h('label', { for: 'r_from' }, 'Заполнить по договору'), fromSel) : null,
+      h('div', { class: 'grid2' }, fld('contract', '№ договора *'), fld('cdate', 'Дата договора *')),
+      fld('korp', 'Корпус *'),
+      ab.use ? h('div', { class: 'field' }, h('span', { class: 'lbl-t' }, 'Направление *'), ab.dirBox) : null,
+      ab.use ? h('div', { class: 'field' }, h('label', { for: 'f_appr' }, 'Согласующий от застройщика *'), ab.apprSel, ab.apprHint) : null,
+      fld('dev2', 'Второй представитель застройщика в комиссии', 'Необязательно. Первым в акте будет тот, кто согласует.'),
+      fld('place', 'Место выполнения работ *'),
+      fld('summary', 'Перечень работ (кратко) *', 'В акте: «необходимо выполнить …, не учтённые проектной документацией».'),
+      fld('reason', 'Обоснование *'),
+      fld('basis', 'Основание', 'Документ: лист РД, письмо, поручение, предписание.'),
+      h('span', { class: 'lbl-t' }, 'Ведомость работ * (до 20 позиций)'),
+      itemsBox, bAdd,
+      h('div', { class: 'grid2' }, fld('pos', 'Должность подписанта *'), fld('name', 'Фамилия, инициалы *')),
+      fld('note', 'Комментарий для застройщика'),
+      h('div', { class: 'note-row' }, icon('info'), 'После согласования акт получает номер, документ и PDF формируются сразу.'),
+      msgBox,
+      h('div', { class: 'fab' }, bSave));
+    suggest(f.place, L.places);
+    add(r, h('div', { class: 'wrap' },
+      h('div', { class: 'top' },
+        h('a', { class: 'icon-btn', href: '#', 'aria-label': 'Назад к заявкам', html: ICON.back }),
+        h('div', { class: 'grow' }, h('div', { class: 't-sub' }, 'Акт необходимости доп. работ · ' + ST.c.org), h('div', { class: 't-main' }, it ? 'Заявка ' + it.id : 'Новая заявка'))),
+      form));
+    (fromSel && !it ? fromSel : f.contract).focus();
+  }
+
   /* ---------- застройщик ---------- */
   function loadDev(quiet) {
     if (ST.loading) return Promise.resolve();
@@ -680,7 +859,7 @@
       ST.loading = false; ST.dev = d; ST.lastLoad = Date.now();
       ST.me = ST.me || {}; ST.me.name = d.name; saveSession();
       renderDev();
-      if (d.wait.some(function (v) { return v.type === 'pl' && v.forming; })) kick();   // «Площадка»: недоформированный акт — повтор
+      if (d.wait.some(function (v) { return (v.type === 'pl' || v.type === 'dr') && v.forming; })) kick();   // «Площадка»: недоформированный акт — повтор
       schedulePoll();
     }).catch(function (e) { ST.loading = false; if (e.code !== 'SESSION' && !quiet) toast(e.message, true); });
   }
@@ -706,7 +885,7 @@
     }
     var arr = ST.dtab === 'fix' ? d.fix : ST.dtab === 'acts' ? d.acts : d.wait;
     if (scope() === 'mine') arr = arr.filter(function (v) { return v.mine; });
-    return q ? arr.filter(function (v) { return key([v.id, v.from, v.to, v.w1, v.w2, v.korp, v.mark, v.axes, v.apprName, v.contract, v.object, v.text, v.type === 'pl' ? 'площадка места производства' : ''].join(' ')).indexOf(q) >= 0; }) : arr;
+    return q ? arr.filter(function (v) { return key([v.id, v.from, v.to, v.w1, v.w2, v.korp, v.mark, v.axes, v.apprName, v.contract, v.object, v.text, v.type === 'pl' ? 'площадка места производства' : '', v.type === 'dr' ? 'доп работы дополнительные ' + v.summary + ' ' + v.place + ' ' + v.num : ''].join(' ')).indexOf(q) >= 0; }) : arr;
   }
   function findDev(id) {
     var d = ST.dev; if (!d) return null;
@@ -741,6 +920,12 @@
         h('div', { class: 'c-head' }, h('span', { class: 'c-id' }, v.id + ' · ' + v.sent), h('span', { class: 'chip wait' }, 'Подключение')),
         h('div', { class: 'c-title' }, v.org),
         h('div', { class: 'c-sub' }, [v.contract ? 'Договор ' + v.contract : '', v.name + ((v.contacts || []).length ? ' +' + v.contacts.length : ''), v.korp, v.dir].filter(Boolean).join(' · ')));
+      if (v.type === 'dr') return h('a', { class: 'card' + (v.forming ? '' : ST.dtab === 'wait' ? ' hot' : ''), href: '#d/' + encodeURIComponent(v.id), style: 'color:var(--tx)' },
+        h('div', { class: 'c-head' }, h('span', { class: 'c-id' }, v.id + ' · ' + v.sent), statusChip(v)),
+        h('div', { class: 'c-title' }, short(v.from), h('span', { class: 'chip bad', style: 'margin-left:8px;font-size:11px;padding:3px 8px' }, 'Доп. работы')),
+        h('div', { class: 'c-sub' }, v.summary + ' · позиций: ' + (v.items || []).length),
+        h('div', { class: 'c-sub' }, ['Договор ' + v.contract, v.korp].filter(Boolean).join(' · ')),
+        !v.mine || scope() === 'all' ? h('div', { class: 'c-sub' }, 'Согласующий: ' + (v.apprName || 'не назначен') + (v.dir ? ' · ' + v.dir : '')) : null);
       if (v.type === 'pl') return h('a', { class: 'card' + (v.forming ? '' : ST.dtab === 'wait' ? ' hot' : ''), href: '#d/' + encodeURIComponent(v.id), style: 'color:var(--tx)' },
         h('div', { class: 'c-head' }, h('span', { class: 'c-id' }, v.id + ' · ' + v.sent), statusChip(v)),
         h('div', { class: 'c-title' }, short(v.from), h('span', { class: 'chip bad', style: 'margin-left:8px;font-size:11px;padding:3px 8px' }, 'Площадка')),
@@ -766,9 +951,9 @@
         return h('tr', { class: sel && sel.id === v.id ? 'sel' : '', tabindex: '0', onclick: function () { go('d/' + encodeURIComponent(v.id)); },
           onkeydown: function (ev) { if (ev.key === 'Enter') go('d/' + encodeURIComponent(v.id)); } },
           h('td', { class: 'mono' }, v.id),
-          v.type === 'pl' ? h('td', { class: 'who' }, 'Площадка → ' + short(v.from)) : h('td', { class: 'who' }, short(v.from) + ' → ' + short(v.to)),
-          h('td', null, v.type === 'pl' ? 'Договор ' + v.contract + (v.cdate ? ' от ' + v.cdate : '') : v.w1 + ' → ' + v.w2),
-          h('td', null, v.type === 'pl' ? plPlaces(v) : place(v)), h('td', { class: v.mine ? 'who' : '' }, (v.apprName || '—') + (v.dir ? ' · ' + v.dir : '')),
+          v.type === 'pl' ? h('td', { class: 'who' }, 'Площадка → ' + short(v.from)) : v.type === 'dr' ? h('td', { class: 'who' }, 'Доп. работы: ' + short(v.from)) : h('td', { class: 'who' }, short(v.from) + ' → ' + short(v.to)),
+          h('td', null, v.type === 'pl' ? 'Договор ' + v.contract + (v.cdate ? ' от ' + v.cdate : '') : v.type === 'dr' ? v.summary + ' (' + (v.items || []).length + ' поз.)' : v.w1 + ' → ' + v.w2),
+          h('td', null, v.type === 'pl' ? plPlaces(v) : v.type === 'dr' ? [v.korp, v.place].filter(Boolean).join(' · ') : place(v)), h('td', { class: v.mine ? 'who' : '' }, (v.apprName || '—') + (v.dir ? ' · ' + v.dir : '')),
           h('td', null, ST.dtab === 'acts' ? (v.type === 'pl' ? 'площадка' : '№ ' + v.act) : (v.forming ? 'формируется' : v.sent)));
       }))) : h('div', { class: 'empty' }, emptyText()));
 
@@ -789,8 +974,8 @@
   function place(v) { return [v.korp, [v.p1, v.mark].filter(Boolean).join(' '), [v.p2, v.axes].filter(Boolean).join(' ')].filter(Boolean).join(' · '); }
   function plPlaces(v) { return [v.korp, (v.places || []).map(function (p) { return p.place; }).join(', ')].filter(Boolean).join(' · '); }
   function statusChip(v) {
-    if (v.type === 'pl') {
-      if (v.done) return h('span', { class: 'chip act' }, 'Акт готов');
+    if (v.type === 'pl' || v.type === 'dr') {
+      if (v.done) return h('span', { class: 'chip act' }, v.type === 'dr' ? 'Акт № ' + v.num : 'Акт готов');
       if (v.forming) return h('span', { class: 'chip ' + (v.err ? 'bad' : 'wait') }, v.err ? 'Повтор формирования' : 'Формируется');
       if (v.ddec === 'На доработку') return h('span', { class: 'chip fix' }, 'На доработке');
       return h('span', { class: 'chip wait' }, 'Ждёт решения');
@@ -803,8 +988,12 @@
   }
 
   function detail(v) {
-    var pl = v.type === 'pl';
-    var facts = pl ? [['Акт', 'Приёмка-передача мест производства работ'], ['Подрядчик', v.from],
+    var pl = v.type === 'pl' || v.type === 'dr';
+    var facts = v.type === 'dr' ? [['Акт', 'Необходимость выполнения дополнительных работ'], ['Подрядчик', v.from],
+      ['Договор', v.contract + (v.cdate ? ' от ' + v.cdate : '')], ['Корпус', v.korp], ['Место', v.place], ['Работы', v.summary],
+      ['Обоснование', v.reason], ['Основание', v.basis], ['Ведомость', (v.items || []).map(drItemLine).join('\n')],
+      ['Подписант', [v.pos, v.name].filter(Boolean).join(', ')], ['В комиссии', v.dev2Name ? 'вы (если согласуете) и ' + v.dev2Name : 'тот, кто согласует']]
+      : v.type === 'pl' ? [['Акт', 'Приёмка-передача мест производства работ'], ['Подрядчик', v.from],
       ['Договор', v.contract + (v.cdate ? ' от ' + v.cdate : '')], ['Объект', v.object], ['Корпус', v.korp],
       ['Подписант', [v.pos, v.name].filter(Boolean).join(', ')], ['Работы', v.works],
       ['Места', (v.places || []).map(plSeg).join('\n')], ['В акте', 'для выполнения: ' + v.text]]
@@ -818,7 +1007,7 @@
       h('div', { class: 'c-head', style: 'display:flex;justify-content:space-between;align-items:center' }, h('span', { class: 'mono', style: 'color:var(--acc-soft-tx)' }, v.id), statusChip(v)),
       h('dl', { class: 'facts' }, facts.map(function (p) { return [h('dt', null, p[0]), h('dd', { style: 'white-space:pre-line' }, p[1] || '—')]; })),
       v.draftUrl && !v.act ? h('a', { class: 'btn ghost', href: v.draftUrl, target: '_blank', rel: 'noopener' }, 'Открыть проект акта', icon('ext')) : null,
-      v.act ? h('div', { class: 'grid2' }, linkBtn(v.docUrl, pl ? 'Акт' : 'Акт № ' + v.act), linkBtn(v.pdfUrl, 'PDF')) : null);
+      v.act ? h('div', { class: 'grid2' }, linkBtn(v.docUrl, v.type === 'pl' ? 'Акт' : 'Акт № ' + v.act), linkBtn(v.pdfUrl, 'PDF')) : null);
     if (v.act || v.forming || v.ddec) {
       add(box, h('div', { class: 'msg ' + (v.err ? 'err' : 'ok') }, v.act ? 'Акт сформирован.' :
         v.forming && v.err ? 'Согласовано, но акт не сформировался (' + v.err.replace(/^Ошибка формирования:?\s*/, '') + '). Повтор — автоматически при следующем решении или через ⟳.' :
@@ -839,7 +1028,7 @@
         } else {
           v.ddec = dec; v.dnote = comment.value; v.by = ST.me && ST.me.name; v.forming = dec === 'Согласовать' && !x.formed;
           toast((dec === 'Согласовать' ? 'Согласовано' : dec === 'На доработку' ? 'Отправлено на доработку' : 'Заявка отклонена') +
-            (x.instead ? ' за ' + x.instead : '') + '.' + (dec !== 'Согласовать' ? '' : x.formed ? ' Акт и PDF готовы.' :
+            (x.instead ? ' за ' + x.instead : '') + '.' + (dec !== 'Согласовать' ? '' : x.formed ? (x.num ? ' Акт № ' + x.num + ' и PDF готовы.' : ' Акт и PDF готовы.') :
               pl ? ' Акт пока не сформирован' + (x.formErr ? ' (' + x.formErr + ')' : '') + ' — повторим автоматически.' : ' Акт и PDF сформируются за 1–3 минуты.'), pl && dec === 'Согласовать' && !x.formed);
           if (!pl || (dec === 'Согласовать' && !x.formed)) kick();
         }
@@ -860,7 +1049,7 @@
       h('div', { class: 'decide' }, bOk, h('div', { class: 'grid2' }, bFix, bNo)),
       msgBox,
       !v.mine && v.apprName ? h('div', { class: 'msg ok' }, 'Заявка назначена: ' + v.apprName + '. Ваше решение запишется как замена — «за ' + v.apprName + '».') : null,
-      h('div', { style: 'font-size:12px;color:var(--mut)' }, pl ? 'Решение запишется с вашим именем и временем. «Согласовать» сразу формирует акт и PDF и добавляет строку в таблицу сбора.' :
+      h('div', { style: 'font-size:12px;color:var(--mut)' }, v.type === 'dr' ? 'Решение запишется с вашим именем и временем. «Согласовать» сразу присваивает номер, формирует акт и PDF; в акте первым представителем застройщика будете вы.' : pl ? 'Решение запишется с вашим именем и временем. «Согласовать» сразу формирует акт и PDF и добавляет строку в таблицу сбора.' :
         'Решение запишется с вашим именем и временем; в акте представителем застройщика будет тот, кто согласовал.')]);
     return box;
   }
