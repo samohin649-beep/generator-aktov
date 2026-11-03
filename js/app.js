@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '1.2.0';
+  var APP_VERSION = '1.2.1';
   var CFG = window.APP_CONFIG || { objects: [] };
   var ST = {
     obj: null, token: '', role: '', me: null, email: '',
@@ -131,7 +131,7 @@
     add(r, h('main', { class: 'login' },
       h('div', { class: 'ring', 'aria-hidden': 'true' }),
       brand('Выберите объект'),
-      h('h1', { class: 'h1' }, 'Передача ', h('em', null, 'фронта работ')),
+      h('h1', { class: 'h1' }, 'Генератор ', h('em', null, 'актов')),
       list.length ? h('div', { class: 'list' }, list.map(function (o) {
         return h('button', { class: 'card', type: 'button', onclick: function () { ST.obj = o; store.set('pf:obj', o.id); document.title = 'Генератор актов — ' + o.name; loadSession(); go(''); } },
           h('span', { class: 'c-title' }, o.name), o.address ? h('span', { class: 'c-sub' }, o.address) : null);
