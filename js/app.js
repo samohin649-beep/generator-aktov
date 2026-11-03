@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '1.2.1';
+  var APP_VERSION = '1.2.2';
   var CFG = window.APP_CONFIG || { objects: [] };
   var ST = {
     obj: null, token: '', role: '', me: null, email: '',
@@ -644,6 +644,7 @@
       ST.loading = false; ST.dev = d; ST.lastLoad = Date.now();
       ST.me = ST.me || {}; ST.me.name = d.name; saveSession();
       renderDev();
+      if (d.wait.some(function (v) { return v.type === 'pl' && v.forming; })) kick();   // «Площадка»: недоформированный акт — повтор
       schedulePoll();
     }).catch(function (e) { ST.loading = false; if (e.code !== 'SESSION' && !quiet) toast(e.message, true); });
   }
