@@ -4,7 +4,7 @@
 (function () {
   'use strict';
 
-  var APP_VERSION = '1.2.2';
+  var APP_VERSION = '1.2.3';
   var CFG = window.APP_CONFIG || { objects: [] };
   var ST = {
     obj: null, token: '', role: '', me: null, email: '',
@@ -142,6 +142,41 @@
       h('div', null, h('div', { class: 'b-sub' }, sub || (ST.obj ? ST.obj.name : '')), h('div', { class: 'b-main' }, 'Генератор актов')));
   }
 
+  /* ---------- установка на телефон ---------- */
+  var INST = { evt: null, done: false };
+  function isStandalone() { return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true; }
+  function installBox() {
+    var box = h('div', { class: 'install', id: 'install' });
+    paintInstall(box);
+    return box;
+  }
+  function paintInstall(box) {
+    box = box || document.getElementById('install');
+    if (!box) return;
+    box.innerHTML = '';
+    if (isStandalone() || INST.done) { box.style.display = 'none'; return; }
+    box.style.display = '';
+    var ua = navigator.userAgent || '';
+    var ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && 'ontouchend' in document);
+    var android = /Android/.test(ua);
+    var inApp = /; wv\)|GSA\/|FBAN|FBAV|Instagram|Telegram|YaBrowser\/.*Mobile.*SA\/|Line\//.test(ua);
+    if (INST.evt) {
+      add(box, h('button', { class: 'btn block', type: 'button', onclick: function () {
+        var e = INST.evt; INST.evt = null;
+        e.prompt();
+        (e.userChoice || Promise.resolve({})).then(function (c) { if (c && c.outcome === 'accepted') INST.done = true; paintInstall(); });
+      } }, icon('plus'), 'Установить приложение'));
+      return;
+    }
+    var text = ios ? 'Установить на iPhone: откройте эту страницу в Safari → кнопка «Поделиться» → «На экран „Домой“».'
+      : android && inApp ? 'Страница открыта во встроенном браузере (камеры, сканера или мессенджера) — там установка недоступна. Нажмите ⋮ → «Открыть в Chrome», затем ⋮ → «Установить приложение».'
+      : android ? 'Установить на телефон: меню ⋮ → «Установить приложение» (или «Добавить на главный экран»). Если открыто из камеры или сканера QR и такого пункта нет — сначала ⋮ → «Открыть в Chrome».'
+      : 'На компьютере: значок установки в адресной строке Chrome или Edge.';
+    add(box, h('div', { class: 'note-row' }, icon('info'), text));
+  }
+  window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); INST.evt = e; paintInstall(); });
+  window.addEventListener('appinstalled', function () { INST.done = true; INST.evt = null; paintInstall(); toast('Приложение установлено — ищите значок «Генератор актов» на экране телефона.'); });
+
   /* ---------- вход ---------- */
   function renderLogin() {
     var step2 = !!ST.email;
@@ -198,6 +233,7 @@
       step2 ? f2 : f1, msgBox,
       (CFG.objects || []).length > 1 ? h('button', { class: 'linkbtn', type: 'button', style: 'align-self:flex-start', onclick: function () { store.set('pf:obj', null); ST.obj = null; go(''); } }, 'Другой объект') : null,
       h('div', { class: 'foot' },
+        installBox(),
         h('a', { class: 'btn ghost block', href: '#join', style: 'margin-bottom:10px' }, 'Заявка на подключение организации'),
         h('a', { class: 'linkbtn', href: 'qr.html', style: 'display:inline-block;margin-bottom:12px' }, 'QR-код приложения — показать или распечатать'),
         'Нет доступа? Подайте заявку на подключение — застройщик рассмотрит её и пришлёт ответ на e-mail. Версия ' + APP_VERSION + '.')));

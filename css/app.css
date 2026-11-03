@@ -183,3 +183,4 @@ select.inp:disabled { opacity: .55; }
 
 /* 1.1.2: «Приложение» — пример мелким шрифтом */
 #f_app::placeholder { font-size: 12px; opacity: .65; }
+.install { margin-bottom: 10px; } .install .btn { margin-bottom: 0; }
